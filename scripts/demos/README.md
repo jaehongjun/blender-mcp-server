@@ -1,22 +1,38 @@
 # Dam-Break Demo
 
 End-to-end validation that the MCP python execution path can build a complete
-fluid-through-town scene without manual Blender UI steps (beyond enabling the
-add-on).
+flood-through-town scene without manual Blender UI steps (beyond enabling the
+add-on). The repo now ships two variants:
 
-## What the Demo Builds
+- `procedural_dam_break_scene.py`: stable visible flood animation for Blender 4.0.x.
+- `dam_break_scene.py`: experimental Mantaflow setup path.
+
+## Recommended Mode
+
+For Blender 4.0.x use the procedural scene. It produces visible water in the
+viewport and avoids the Mantaflow viewport crash.
+
+```bash
+python3 scripts/demos/run_dam_break.py
+```
+
+To force the older Mantaflow path:
+
+```bash
+python3 scripts/demos/run_dam_break.py --simulation mantaflow --bake
+```
+
+## What the Procedural Demo Builds
 
 | Element | Details |
 |---|---|
-| Ground plane | 20×20 street surface |
-| 3 buildings | Blockout cubes along the street |
-| Fluid domain | Mantaflow liquid, max resolution 32 |
-| Water inflow | Positioned at +X edge, velocity toward −X |
-| 4 colliders | Ground + 3 buildings (fluid effectors) |
-| 2 debris objects | Active rigid bodies (crate, barrel) |
-| Camera | 35 mm lens, dolly keyframes over 120 frames |
+| Ground plane | Street + sidewalks + barrier |
+| 6 buildings | Blockout town section around an intersection |
+| Flood animation | Procedural water mesh sequence over 120 frames |
+| Debris objects | 4 props advected by the flood field |
+| Camera | Animated cinematic overview over 120 frames |
 | Frame range | 1–120 at 24 fps |
-| Render settings | EEVEE, 960×540 preview |
+| Render settings | EEVEE, 1280×720 preview |
 
 ## Two Ways to Run
 
@@ -28,8 +44,8 @@ Send the monolithic scene script through MCP:
 {
   "tool": "blender_python_exec",
   "args": {
-    "script_path": "/path/to/scripts/demos/dam_break_scene.py",
-    "args": {"resolution": 32, "frame_end": 120}
+    "script_path": "/path/to/scripts/demos/procedural_dam_break_scene.py",
+    "args": {"frame_end": 120}
   }
 }
 ```
@@ -38,7 +54,7 @@ Or via the bridge test helper:
 
 ```bash
 python3 scripts/blender_bridge_request.py python.execute \
-  --params '{"script_path":"/path/to/scripts/demos/dam_break_scene.py","args":{"resolution":32}}'
+  --params '{"script_path":"/path/to/scripts/demos/procedural_dam_break_scene.py","args":{"frame_end":120}}'
 ```
 
 ### Option B — Step-by-step bridge caller
@@ -51,12 +67,18 @@ portability, so it does not depend on approved script roots inside Blender):
 # Dry run — see what would be sent:
 python3 scripts/demos/run_dam_break.py --dry-run
 
-# Run against live Blender:
+# Run against live Blender (stable procedural mode):
 python3 scripts/demos/run_dam_break.py
 
-# Run with fluid bake and preview render:
-python3 scripts/demos/run_dam_break.py --bake --render
+# Run Mantaflow mode instead:
+python3 scripts/demos/run_dam_break.py --simulation mantaflow --bake --render
 ```
+
+## Mantaflow Notes
+
+The Mantaflow path remains in the repo for experimentation, but Blender 4.0.x
+can crash when a visible liquid domain updates in the viewport. Use the
+procedural scene when you need a stable visible result in the live app.
 
 ## After Scene Setup
 

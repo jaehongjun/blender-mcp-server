@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Drive a dam-break demo scene through the Blender MCP bridge.
+"""Drive dam-break demo scenes through the Blender MCP bridge.
 
 This script connects directly to the Blender add-on TCP bridge and sends a
 sequence of ``python.execute`` commands that build the scene step-by-step.
-It demonstrates both **inline code** (for geometry creation) and **library
-script** invocations (for physics, camera, keyframes, etc.).
+It supports two modes:
+
+* ``procedural``: stable, visible flood animation built from a procedural mesh
+  sequence. This is the default for Blender 4.0.x.
+* ``mantaflow``: the original experimental Mantaflow blockout pipeline.
 
 Usage::
 
@@ -301,7 +304,7 @@ def build_steps(library_dir: str) -> list[dict[str, Any]]:
 # Runner
 # ---------------------------------------------------------------------------
 
-def run_demo(
+def run_mantaflow_demo(
     host: str,
     port: int,
     library_dir: str,
@@ -409,12 +412,76 @@ def run_demo(
     if dry_run:
         print(f"  Dry run complete — {len(steps)} steps printed")
     elif ok:
-        print(f"  ✓ Dam-break scene built successfully ({len(steps)} steps)")
+        print(f"  ✓ Mantaflow dam-break scene built successfully ({len(steps)} steps)")
     else:
         print(f"  ✗ Some steps failed — check output above")
     print(f"{'═' * 60}\n")
 
     return 0 if ok else 1
+
+
+def run_procedural_demo(
+    host: str,
+    port: int,
+    *,
+    dry_run: bool = False,
+    render: bool = False,
+    render_output: str = "/tmp/dam_break_preview.png",
+) -> int:
+    scene_script = Path(__file__).resolve().parent / "procedural_dam_break_scene.py"
+    print(f"\n{'═' * 60}")
+    print("  Procedural dam-break demo")
+    print(f"{'═' * 60}")
+
+    if dry_run:
+        print(f"  [dry-run] script: {scene_script}")
+        return 0
+
+    try:
+        response = exec_script(str(scene_script), {"frame_end": 120}, host=host, port=port, timeout=120.0)
+    except Exception as exc:
+        print(f"  ✗ Connection error: {exc}")
+        return 1
+
+    if not response.get("success"):
+        print(f"  ✗ FAILED: {response.get('error', 'unknown')}")
+        return 1
+
+    result = response.get("result", {})
+    inner_error = result.get("error") if isinstance(result, dict) else None
+    if inner_error:
+        print(f"  ✗ SCRIPT ERROR: {inner_error}")
+        return 1
+
+    print("  ✓ Scene built")
+    if isinstance(result, dict):
+        for key, value in result.items():
+            print(f"    {key}: {value}")
+
+    if render:
+        print(f"\n{'─' * 60}")
+        print("  Rendering preview still...")
+        print(f"{'─' * 60}")
+        try:
+            resp = render_still(render_output, host=host, port=port, timeout=120.0)
+            if resp.get("success"):
+                print(f"  ✓ Rendered to {resp['result'].get('output_path', render_output)}")
+            else:
+                print(f"  ✗ Render failed: {resp.get('error')}")
+                return 1
+        except Exception as exc:
+            print(f"  ✗ Render error: {exc}")
+            return 1
+
+    print(f"\n{'═' * 60}")
+    print("  ✓ Procedural dam-break scene built successfully")
+    print(f"{'═' * 60}\n")
+    return 0
+
+
+def run_demo(*args: Any, **kwargs: Any) -> int:
+    """Backward-compatible alias for the original Mantaflow demo runner."""
+    return run_mantaflow_demo(*args, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -441,9 +508,24 @@ def main() -> int:
                         help="Render a preview still after setup")
     parser.add_argument("--render-output", default="/tmp/dam_break_preview.png",
                         help="Output path for the preview render")
+    parser.add_argument(
+        "--simulation",
+        choices=("procedural", "mantaflow"),
+        default="procedural",
+        help="Scene generation mode. 'procedural' is the stable default for Blender 4.0.x.",
+    )
     args = parser.parse_args()
 
-    return run_demo(
+    if args.simulation == "procedural":
+        return run_procedural_demo(
+            args.host,
+            args.port,
+            dry_run=args.dry_run,
+            render=args.render,
+            render_output=args.render_output,
+        )
+
+    return run_mantaflow_demo(
         args.host,
         args.port,
         args.library,
