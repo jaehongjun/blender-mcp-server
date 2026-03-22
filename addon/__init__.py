@@ -9,6 +9,7 @@ bl_info = {
 }
 
 import bpy
+import builtins
 import json
 import io
 import os
@@ -65,6 +66,23 @@ def _cap_output(text: str) -> str:
     if len(text) <= MAX_OUTPUT_SIZE:
         return text
     return text[:MAX_OUTPUT_SIZE] + f"\n… (truncated, {len(text)} total chars)"
+
+
+def _make_exec_builtins(blocked_modules: set[str]) -> dict[str, Any]:
+    """Create a per-execution builtins dict with a guarded __import__."""
+    exec_builtins = dict(builtins.__dict__)
+    original_import = exec_builtins["__import__"]
+
+    def guarded_import(name, *a, **kw):
+        top_level = name.split(".")[0]
+        if top_level in blocked_modules:
+            raise ImportError(
+                f"Import of '{name}' is blocked by MCP safety policy"
+            )
+        return original_import(name, *a, **kw)
+
+    exec_builtins["__import__"] = guarded_import
+    return exec_builtins
 
 
 # Last execution status — shown in the Blender UI panel
@@ -562,6 +580,7 @@ class CommandHandler:
             "mathutils": mathutils,
             "args": args or {},
             "__result__": None,
+            "__builtins__": _make_exec_builtins(BLOCKED_MODULES),
         }
         if cancel_event is not None:
             ns["__cancel_event__"] = cancel_event
@@ -590,9 +609,6 @@ class CommandHandler:
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()
         start = time.monotonic()
-
-        hook = _BlockedImportHook(BLOCKED_MODULES)
-        hook.install()
         previous_trace = sys.gettrace()
 
         def trace_calls(frame, event, arg):
@@ -630,7 +646,6 @@ class CommandHandler:
             }
         finally:
             sys.settrace(previous_trace)
-            hook.uninstall()
 
         elapsed = time.monotonic() - start
         logger.info(
@@ -734,37 +749,6 @@ class CommandHandler:
 
     def _job_list(self, params: dict) -> dict:
         return _job_manager.list_jobs()
-
-
-class _BlockedImportHook:
-    """Temporary import hook that blocks specified modules during exec()."""
-
-    def __init__(self, blocked: set[str]):
-        self._blocked = blocked
-        self._original_import = None
-
-    def install(self):
-        import builtins
-        self._original_import = builtins.__import__
-
-        blocked = self._blocked
-
-        def guarded_import(name, *a, **kw):
-            top_level = name.split(".")[0]
-            if top_level in blocked:
-                raise ImportError(
-                    f"Import of '{name}' is blocked by MCP safety policy"
-                )
-            return self._original_import(name, *a, **kw)
-
-        builtins.__import__ = guarded_import
-
-    def uninstall(self):
-        if self._original_import is not None:
-            import builtins
-            builtins.__import__ = self._original_import
-            self._original_import = None
-
 
 class JobManager:
     """Manages async job lifecycle for long-running Blender scripts."""

@@ -302,6 +302,13 @@ class TestPythonExecute:
         assert result["error"] is not None
         assert "blocked" in result["error"].lower() or "ImportError" in result["error"]
 
+    def test_blocked_import_hook_does_not_mutate_global_builtins(self, handler):
+        import builtins as pybuiltins
+
+        original_import = pybuiltins.__import__
+        handler.handle("python.execute", {"code": "import subprocess"})
+        assert pybuiltins.__import__ is original_import
+
     def test_allowed_module_import(self, handler):
         result = handler.handle("python.execute", {
             "code": "import json; __result__ = json.dumps({'ok': True})",
