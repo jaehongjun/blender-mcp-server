@@ -288,6 +288,7 @@ Pre-built scripts in `scripts/library/` for common Blender tasks. Use with `blen
 | `save_blend.py` | Save the .blend file |
 
 See `scripts/library/README.md` for full argument docs and an end-to-end dam-break setup walkthrough.
+For heavy physics workflows, prefer `transport="headless"` on `blender_python_exec` / `blender_python_exec_async`. That runs the script in a separate `blender -b` process instead of the live add-on session.
 
 ## Example Session
 
@@ -431,8 +432,8 @@ All output below was produced by a live Blender 4.0.2 instance controlled throug
 
 | Tool | Description |
 |---|---|
-| `blender_python_exec` | Execute a Python script synchronously in Blender's context. Provide `code` or `script_path`, optional `args` and `timeout_seconds`. Returns result, stdout, stderr, and cooperative timeout/cancel metadata. |
-| `blender_python_exec_async` | Start a long-running script asynchronously. Returns a `job_id`. Use for baking, heavy generation. |
+| `blender_python_exec` | Execute a Python script synchronously in Blender. Provide `code` or `script_path`, optional `args`, `timeout_seconds`, and `transport` (`bridge` or `headless`). Returns result, stdout, stderr, and timeout/cancel metadata. |
+| `blender_python_exec_async` | Start a long-running script asynchronously. Returns a `job_id`. Supports `transport="headless"` for separate background Blender processes. |
 | `blender_job_status` | Poll an async job's status, result, stdout, stderr, and error. |
 | `blender_job_cancel` | Cancel a running or queued async job. |
 | `blender_job_list` | List known async jobs with IDs, status, and creation time. |
