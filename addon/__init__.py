@@ -9,13 +9,19 @@ bl_info = {
 }
 
 import bpy
+import builtins
 import json
+import io
 import os
 import queue
 import socket
+import sys
 import threading
 import traceback
 import logging
+import time
+import uuid
+from contextlib import redirect_stdout, redirect_stderr
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -28,6 +34,117 @@ BUFFER_SIZE = 65536
 SAFE_MODE = False
 ALLOWED_PATHS: list[str] = []
 TOOL_WHITELIST: set[str] | None = None  # None = all tools allowed
+
+# Python execution settings (set via addon preferences)
+ALLOW_INLINE_CODE = True
+APPROVED_SCRIPT_ROOTS: list[str] = []
+BLOCKED_MODULES: set[str] = {
+    "subprocess",
+    "shutil",
+    "socket",
+    "webbrowser",
+    "ctypes",
+    "multiprocessing",
+}
+DEFAULT_SYNC_TIMEOUT = 30
+DEFAULT_ASYNC_TIMEOUT = 300
+MAX_SYNC_TIMEOUT = 300
+MAX_ASYNC_TIMEOUT = 3600
+MAX_OUTPUT_SIZE = 50000  # Cap stdout/stderr returned to client
+LOG_CODE_PREVIEW_LEN = 120  # Max chars of code shown in log messages
+
+
+def _truncate(text: str, limit: int) -> str:
+    """Truncate text with an ellipsis indicator."""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "…"
+
+
+def _cap_output(text: str) -> str:
+    """Cap output string to MAX_OUTPUT_SIZE."""
+    if len(text) <= MAX_OUTPUT_SIZE:
+        return text
+    return text[:MAX_OUTPUT_SIZE] + f"\n… (truncated, {len(text)} total chars)"
+
+
+def _make_exec_builtins(blocked_modules: set[str]) -> dict[str, Any]:
+    """Create a per-execution builtins dict with a guarded __import__."""
+    exec_builtins = dict(builtins.__dict__)
+    original_import = exec_builtins["__import__"]
+
+    def guarded_import(name, *a, **kw):
+        top_level = name.split(".")[0]
+        if top_level in blocked_modules:
+            raise ImportError(
+                f"Import of '{name}' is blocked by MCP safety policy"
+            )
+        return original_import(name, *a, **kw)
+
+    exec_builtins["__import__"] = guarded_import
+    return exec_builtins
+
+
+# Last execution status — shown in the Blender UI panel
+_last_execution: dict[str, Any] = {
+    "request_id": None,
+    "source": None,
+    "status": None,
+    "duration_seconds": None,
+    "error_summary": None,
+}
+
+
+class ScriptExecutionTimeout(TimeoutError):
+    """Raised when script execution exceeds the configured timeout."""
+
+
+class ScriptExecutionCancelled(RuntimeError):
+    """Raised when script execution is cancelled cooperatively."""
+
+
+def _get_addon_preferences():
+    """Return this add-on's preferences object when available."""
+    context = getattr(bpy, "context", None)
+    preferences = getattr(context, "preferences", None)
+    addons = getattr(preferences, "addons", None)
+    if addons is None:
+        return None
+
+    addon_entry = None
+    getter = getattr(addons, "get", None)
+    if callable(getter):
+        addon_entry = getter(__name__)
+    elif isinstance(addons, dict):
+        addon_entry = addons.get(__name__)
+
+    return getattr(addon_entry, "preferences", None)
+
+
+def _sync_runtime_settings():
+    """Apply add-on preferences to module-level runtime settings."""
+    global SAFE_MODE, PORT, ALLOW_INLINE_CODE, APPROVED_SCRIPT_ROOTS, ALLOWED_PATHS
+
+    prefs = _get_addon_preferences()
+    if prefs is None:
+        return
+
+    SAFE_MODE = bool(getattr(prefs, "safe_mode", SAFE_MODE))
+    PORT = int(getattr(prefs, "port", PORT))
+    ALLOW_INLINE_CODE = bool(getattr(prefs, "allow_inline_code", ALLOW_INLINE_CODE))
+
+    raw_roots = getattr(prefs, "approved_script_roots", "") or ""
+    path_helper = getattr(getattr(bpy, "path", None), "abspath", None)
+    approved_roots = []
+    for root in raw_roots.split(";"):
+        root = root.strip()
+        if not root:
+            continue
+        resolved = path_helper(root) if callable(path_helper) else root
+        approved_roots.append(os.path.realpath(resolved))
+
+    APPROVED_SCRIPT_ROOTS = approved_roots
+    ALLOWED_PATHS = approved_roots.copy() if SAFE_MODE else []
 
 
 class CommandHandler:
@@ -60,8 +177,14 @@ class CommandHandler:
         self._handlers["export.fbx"] = self._export_fbx
         self._handlers["history.undo"] = self._history_undo
         self._handlers["history.redo"] = self._history_redo
+        self._handlers["python.execute"] = self._python_execute
+        self._handlers["python.execute_async"] = self._python_execute_async
+        self._handlers["job.status"] = self._job_status
+        self._handlers["job.cancel"] = self._job_cancel
+        self._handlers["job.list"] = self._job_list
 
     def handle(self, command: str, params: dict) -> Any:
+        _sync_runtime_settings()
         # Security: check tool whitelist
         if TOOL_WHITELIST is not None and command not in TOOL_WHITELIST:
             raise PermissionError(f"Command '{command}' is not in the tool whitelist")
@@ -422,6 +545,362 @@ class CommandHandler:
         bpy.ops.ed.redo()
         return {"action": "redo"}
 
+    # -- Python execution tools --
+
+    @staticmethod
+    def _validate_script_path(script_path: str) -> str:
+        """Validate that a script path is under an approved root directory."""
+        real_path = os.path.realpath(script_path)
+        if not os.path.isfile(real_path):
+            raise FileNotFoundError(f"Script not found: {script_path}")
+        if not real_path.endswith(".py"):
+            raise ValueError(f"Script must be a .py file: {script_path}")
+
+        roots = APPROVED_SCRIPT_ROOTS
+        if not roots:
+            blend_dir = (
+                os.path.dirname(bpy.data.filepath) if bpy.data.filepath else os.getcwd()
+            )
+            roots = [blend_dir]
+
+        for root in roots:
+            if real_path.startswith(os.path.realpath(root) + os.sep) or real_path == os.path.realpath(root):
+                return real_path
+        raise PermissionError(
+            f"Script path denied: '{script_path}' is outside approved roots. "
+            f"Approved: {roots}"
+        )
+
+    @staticmethod
+    def _make_namespace(args: dict, cancel_event: threading.Event | None = None) -> dict:
+        """Build the execution namespace for exec()."""
+        import mathutils
+        ns: dict[str, Any] = {
+            "bpy": bpy,
+            "mathutils": mathutils,
+            "args": args or {},
+            "__result__": None,
+            "__builtins__": _make_exec_builtins(BLOCKED_MODULES),
+        }
+        if cancel_event is not None:
+            ns["__cancel_event__"] = cancel_event
+        return ns
+
+    @staticmethod
+    def _safe_json(value: Any) -> Any:
+        """Ensure a value is JSON-serializable, falling back to repr()."""
+        if value is None:
+            return None
+        try:
+            json.dumps(value)
+            return value
+        except (TypeError, ValueError):
+            return repr(value)
+
+    def _run_code(
+        self,
+        code: str,
+        namespace: dict,
+        timeout_seconds: float,
+        request_id: str | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> dict:
+        """Execute code with stdout/stderr capture and cooperative timeout checks."""
+        stdout_buf = io.StringIO()
+        stderr_buf = io.StringIO()
+        start = time.monotonic()
+        previous_trace = sys.gettrace()
+
+        def trace_calls(frame, event, arg):
+            if event == "line":
+                if cancel_event is not None and cancel_event.is_set():
+                    raise ScriptExecutionCancelled("Execution cancelled")
+                if timeout_seconds > 0 and (time.monotonic() - start) > timeout_seconds:
+                    raise ScriptExecutionTimeout(
+                        f"Execution exceeded timeout of {timeout_seconds:.3f}s"
+                    )
+            return trace_calls
+
+        sys.settrace(trace_calls)
+        try:
+            with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
+                exec(compile(code, "<mcp-script>", "exec"), namespace)
+        except Exception as exc:
+            elapsed = time.monotonic() - start
+            tb_lines = traceback.format_exception(type(exc), exc, exc.__traceback__)
+            # Filter out internal bridge frames
+            filtered = [l for l in tb_lines if "addon/__init__" not in l]
+            error_str = "".join(filtered).strip()
+            logger.warning(
+                "Script execution failed [%s] after %.3fs: %s",
+                request_id or "?", elapsed, _truncate(str(exc), 200),
+            )
+            return {
+                "result": None,
+                "stdout": _cap_output(stdout_buf.getvalue()),
+                "stderr": _cap_output(stderr_buf.getvalue()),
+                "error": error_str,
+                "duration_seconds": round(elapsed, 4),
+                "timed_out": isinstance(exc, ScriptExecutionTimeout),
+                "cancelled": isinstance(exc, ScriptExecutionCancelled),
+            }
+        finally:
+            sys.settrace(previous_trace)
+
+        elapsed = time.monotonic() - start
+        logger.info(
+            "Script execution succeeded [%s] in %.3fs",
+            request_id or "?", elapsed,
+        )
+        return {
+            "result": self._safe_json(namespace.get("__result__")),
+            "stdout": _cap_output(stdout_buf.getvalue()),
+            "stderr": _cap_output(stderr_buf.getvalue()),
+            "error": None,
+            "duration_seconds": round(elapsed, 4),
+            "timed_out": False,
+            "cancelled": False,
+        }
+
+    def _python_execute(self, params: dict) -> dict:
+        global _last_execution
+        code = params.get("code")
+        script_path = params.get("script_path")
+        args = params.get("args", {})
+        timeout_seconds = min(
+            params.get("timeout_seconds", DEFAULT_SYNC_TIMEOUT), MAX_SYNC_TIMEOUT
+        )
+
+        request_id = f"exec-{uuid.uuid4().hex[:8]}"
+
+        if code and script_path:
+            raise ValueError("Provide either 'code' or 'script_path', not both")
+        if not code and not script_path:
+            raise ValueError("Either 'code' or 'script_path' must be provided")
+
+        if code is not None:
+            if not ALLOW_INLINE_CODE:
+                raise PermissionError(
+                    "Inline code execution is disabled. Use script_path instead."
+                )
+            source_label = f"inline ({_truncate(code, LOG_CODE_PREVIEW_LEN)})"
+        else:
+            validated = self._validate_script_path(script_path)
+            with open(validated, "r") as f:
+                code = f.read()
+            source_label = f"file ({script_path})"
+
+        logger.info("python.execute [%s] starting: %s", request_id, source_label)
+
+        namespace = self._make_namespace(args)
+        result = self._run_code(
+            code, namespace, timeout_seconds, request_id, cancel_event=None
+        )
+
+        _last_execution = {
+            "request_id": request_id,
+            "source": source_label,
+            "status": "error" if result.get("error") else "ok",
+            "duration_seconds": result.get("duration_seconds"),
+            "error_summary": _truncate(result["error"], 200) if result.get("error") else None,
+        }
+        return result
+
+    def _python_execute_async(self, params: dict) -> dict:
+        code = params.get("code")
+        script_path = params.get("script_path")
+        args = params.get("args", {})
+        timeout_seconds = min(
+            params.get("timeout_seconds", DEFAULT_ASYNC_TIMEOUT), MAX_ASYNC_TIMEOUT
+        )
+
+        if code and script_path:
+            raise ValueError("Provide either 'code' or 'script_path', not both")
+        if not code and not script_path:
+            raise ValueError("Either 'code' or 'script_path' must be provided")
+
+        if code is not None:
+            if not ALLOW_INLINE_CODE:
+                raise PermissionError(
+                    "Inline code execution is disabled. Use script_path instead."
+                )
+            source_label = f"inline ({_truncate(code, LOG_CODE_PREVIEW_LEN)})"
+        else:
+            validated = self._validate_script_path(script_path)
+            with open(validated, "r") as f:
+                code = f.read()
+            source_label = f"file ({script_path})"
+
+        job_id = _job_manager.create_job(code, args, timeout_seconds, self)
+        logger.info("python.execute_async [%s] queued: %s", job_id, source_label)
+        return {"job_id": job_id}
+
+    def _job_status(self, params: dict) -> dict:
+        job_id = params.get("job_id")
+        if not job_id:
+            raise ValueError("'job_id' is required")
+        return _job_manager.get_status(job_id)
+
+    def _job_cancel(self, params: dict) -> dict:
+        job_id = params.get("job_id")
+        if not job_id:
+            raise ValueError("'job_id' is required")
+        return _job_manager.cancel(job_id)
+
+    def _job_list(self, params: dict) -> dict:
+        return _job_manager.list_jobs()
+
+class JobManager:
+    """Manages async job lifecycle for long-running Blender scripts."""
+
+    def __init__(self):
+        self._jobs: dict[str, dict[str, Any]] = {}
+        self._lock = threading.Lock()
+
+    def create_job(
+        self,
+        code: str,
+        args: dict,
+        timeout_seconds: float,
+        handler: CommandHandler,
+    ) -> str:
+        job_id = f"job-{uuid.uuid4().hex[:8]}"
+        now = time.time()
+        cancel_event = threading.Event()
+
+        job = {
+            "job_id": job_id,
+            "status": "queued",
+            "cancellation_requested": False,
+            "created_at": now,
+            "started_at": None,
+            "completed_at": None,
+            "result": None,
+            "stdout": "",
+            "stderr": "",
+            "error": None,
+            "code": code,
+            "args": args,
+            "timeout_seconds": timeout_seconds,
+            "cancel_event": cancel_event,
+            "handler": handler,
+        }
+
+        with self._lock:
+            self._jobs[job_id] = job
+
+        bpy.app.timers.register(
+            lambda: self._execute_job(job_id), first_interval=0.01
+        )
+        return job_id
+
+    def _execute_job(self, job_id: str) -> None:
+        global _last_execution
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job or job["status"] != "queued":
+                return
+            job["status"] = "running"
+            job["started_at"] = time.time()
+
+        logger.info("Job [%s] running", job_id)
+
+        cancel_event = job["cancel_event"]
+        if cancel_event.is_set():
+            with self._lock:
+                job["status"] = "cancelled"
+                job["completed_at"] = time.time()
+            logger.info("Job [%s] cancelled before start", job_id)
+            return
+
+        handler = job["handler"]
+        namespace = handler._make_namespace(job["args"], cancel_event)
+        result = handler._run_code(
+            job["code"],
+            namespace,
+            job["timeout_seconds"],
+            job_id,
+            cancel_event=cancel_event,
+        )
+
+        with self._lock:
+            job["result"] = result.get("result")
+            job["stdout"] = result.get("stdout", "")
+            job["stderr"] = result.get("stderr", "")
+            job["error"] = result.get("error")
+            if result.get("cancelled") or cancel_event.is_set():
+                job["status"] = "cancelled"
+            else:
+                job["status"] = "failed" if result.get("error") else "succeeded"
+            job["completed_at"] = time.time()
+
+        elapsed = (job["completed_at"] - job["started_at"]) if job["started_at"] else 0
+        logger.info("Job [%s] %s in %.3fs", job_id, job["status"], elapsed)
+
+        _last_execution = {
+            "request_id": job_id,
+            "source": f"async job",
+            "status": job["status"],
+            "duration_seconds": round(elapsed, 4),
+            "error_summary": _truncate(job["error"], 200) if job.get("error") else None,
+        }
+
+    def get_status(self, job_id: str) -> dict:
+        with self._lock:
+            job = self._jobs.get(job_id)
+        if not job:
+            raise ValueError(f"Unknown job: {job_id}")
+        return {
+            "job_id": job["job_id"],
+            "status": job["status"],
+            "cancellation_requested": job["cancellation_requested"],
+            "created_at": job["created_at"],
+            "started_at": job["started_at"],
+            "completed_at": job["completed_at"],
+            "result": job["result"],
+            "stdout": job["stdout"],
+            "stderr": job["stderr"],
+            "error": job["error"],
+        }
+
+    def cancel(self, job_id: str) -> dict:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                raise ValueError(f"Unknown job: {job_id}")
+
+            job["cancel_event"].set()
+            job["cancellation_requested"] = True
+
+            if job["status"] == "queued":
+                job["status"] = "cancelled"
+                job["completed_at"] = time.time()
+
+            status = job["status"]
+            cancellation_requested = job["cancellation_requested"]
+
+        return {
+            "job_id": job_id,
+            "status": status,
+            "cancellation_requested": cancellation_requested,
+        }
+
+    def list_jobs(self) -> dict:
+        with self._lock:
+            jobs = [
+                {
+                    "job_id": j["job_id"],
+                    "status": j["status"],
+                    "created_at": j["created_at"],
+                }
+                for j in self._jobs.values()
+            ]
+        return {"jobs": jobs}
+
+
+# Global job manager instance
+_job_manager = JobManager()
+
 
 class BlenderMCPServer:
     """TCP socket server running inside Blender."""
@@ -430,22 +909,27 @@ class BlenderMCPServer:
         self._server_socket: socket.socket | None = None
         self._thread: threading.Thread | None = None
         self._running = False
+        self._host = HOST
+        self._port = PORT
         self._handler = CommandHandler()
         self._request_queue: queue.Queue[dict[str, Any]] = queue.Queue()
 
     def start(self):
         if self._running:
             return
+        _sync_runtime_settings()
         self._running = True
+        self._host = HOST
+        self._port = PORT
         self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._server_socket.settimeout(1.0)
-        self._server_socket.bind((HOST, PORT))
+        self._server_socket.bind((self._host, self._port))
         self._server_socket.listen(1)
         self._thread = threading.Thread(target=self._accept_loop, daemon=True)
         self._thread.start()
         bpy.app.timers.register(self._drain_request_queue, first_interval=0.01)
-        logger.info(f"Blender MCP Bridge listening on {HOST}:{PORT}")
+        logger.info(f"Blender MCP Bridge listening on {self._host}:{self._port}")
 
     def stop(self):
         self._running = False
@@ -581,11 +1065,25 @@ class MCP_AddonPreferences(bpy.types.AddonPreferences):
         min=1024,
         max=65535,
     )
+    allow_inline_code: bpy.props.BoolProperty(
+        name="Allow Inline Code",
+        description="Allow python.execute to run inline code strings. Disable to only allow script files",
+        default=True,
+    )
+    approved_script_roots: bpy.props.StringProperty(
+        name="Approved Script Roots",
+        description="Semicolon-separated list of directories from which script files may be loaded",
+        default="",
+    )
 
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "safe_mode")
         layout.prop(self, "port")
+        layout.separator()
+        layout.label(text="Python Execution")
+        layout.prop(self, "allow_inline_code")
+        layout.prop(self, "approved_script_roots")
 
 
 class MCP_PT_Panel(bpy.types.Panel):
@@ -599,11 +1097,25 @@ class MCP_PT_Panel(bpy.types.Panel):
         layout = self.layout
         global _server
         if _server and _server._running:
-            layout.label(text=f"● Listening on {HOST}:{PORT}", icon="LINKED")
+            layout.label(text=f"● Listening on {_server._host}:{_server._port}", icon="LINKED")
             layout.operator("mcp.stop_server", text="Stop Server")
         else:
             layout.label(text="○ Server stopped", icon="UNLINKED")
             layout.operator("mcp.start_server", text="Start Server")
+
+        # Last script execution status
+        if _last_execution["request_id"]:
+            layout.separator()
+            layout.label(text="Last Execution", icon="SCRIPT")
+            box = layout.box()
+            status = _last_execution["status"]
+            icon = "CHECKMARK" if status in ("ok", "succeeded") else "ERROR"
+            box.label(text=f"Status: {status}", icon=icon)
+            box.label(text=f"ID: {_last_execution['request_id']}")
+            if _last_execution["duration_seconds"] is not None:
+                box.label(text=f"Duration: {_last_execution['duration_seconds']:.3f}s")
+            if _last_execution["error_summary"]:
+                box.label(text=f"Error: {_last_execution['error_summary']}", icon="ERROR")
 
 
 class MCP_OT_StartServer(bpy.types.Operator):
@@ -615,7 +1127,7 @@ class MCP_OT_StartServer(bpy.types.Operator):
         if _server is None:
             _server = BlenderMCPServer()
         _server.start()
-        self.report({"INFO"}, f"MCP Bridge started on {HOST}:{PORT}")
+        self.report({"INFO"}, f"MCP Bridge started on {_server._host}:{_server._port}")
         return {"FINISHED"}
 
 
@@ -638,6 +1150,7 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     # Auto-start the server
+    _sync_runtime_settings()
     global _server
     _server = BlenderMCPServer()
     _server.start()

@@ -8,11 +8,13 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
+from blender_mcp_server.headless import HeadlessBlenderExecutor, HeadlessJobManager
 
 logger = logging.getLogger(__name__)
 
 BLENDER_HOST = "127.0.0.1"
 BLENDER_PORT = 9876
+HEADLESS_JOB_MANAGER = HeadlessJobManager()
 
 
 class BlenderConnection:
@@ -293,7 +295,11 @@ async def material_set_texture(ctx: Context, name: str, filepath: str) -> str:
 
 @mcp.tool(
     name="blender_render_still",
-    description="Render the current scene as a still image. Optionally set output path, resolution, and render engine (BLENDER_EEVEE, CYCLES, etc.).",
+    description=(
+        "Render the current scene as a still image. Optionally set output path, resolution, and render engine "
+        "(BLENDER_EEVEE, CYCLES, etc.). Use transport='bridge' for the live Blender add-on session, or "
+        "transport='headless' with blend_file='/path/to/file.blend' to render in a separate background Blender process."
+    ),
 )
 async def render_still(
     ctx: Context,
@@ -301,21 +307,59 @@ async def render_still(
     resolution_x: int | None = None,
     resolution_y: int | None = None,
     engine: str | None = None,
+    transport: str = "bridge",
+    blend_file: str | None = None,
 ) -> str:
-    params: dict[str, Any] = {"output_path": output_path}
-    if resolution_x:
-        params["resolution_x"] = resolution_x
-    if resolution_y:
-        params["resolution_y"] = resolution_y
-    if engine:
-        params["engine"] = engine
-    result = await _get_conn(ctx).send_command("render.still", params)
+    if transport == "headless":
+        code = """
+import bpy
+scene = bpy.context.scene
+scene.render.filepath = args["output_path"]
+if args.get("resolution_x") is not None:
+    scene.render.resolution_x = args["resolution_x"]
+if args.get("resolution_y") is not None:
+    scene.render.resolution_y = args["resolution_y"]
+if args.get("engine"):
+    scene.render.engine = args["engine"]
+bpy.ops.render.render(write_still=True)
+__result__ = {
+    "output_path": scene.render.filepath,
+    "engine": scene.render.engine,
+    "resolution_x": scene.render.resolution_x,
+    "resolution_y": scene.render.resolution_y,
+}
+"""
+        executor = HeadlessBlenderExecutor()
+        result = await executor.execute(
+            code=code,
+            args={
+                "output_path": output_path,
+                "resolution_x": resolution_x,
+                "resolution_y": resolution_y,
+                "engine": engine,
+            },
+            blend_file=blend_file,
+            factory_startup=False if blend_file else True,
+        )
+    else:
+        params: dict[str, Any] = {"output_path": output_path}
+        if resolution_x:
+            params["resolution_x"] = resolution_x
+        if resolution_y:
+            params["resolution_y"] = resolution_y
+        if engine:
+            params["engine"] = engine
+        result = await _get_conn(ctx).send_command("render.still", params)
     return json.dumps(result, indent=2)
 
 
 @mcp.tool(
     name="blender_render_animation",
-    description="Render an animation. Optionally set output path, frame range, and render engine.",
+    description=(
+        "Render an animation. Optionally set output path, frame range, and render engine. "
+        "Use transport='bridge' for the live Blender add-on session, or transport='headless' with a blend_file "
+        "to render in a separate background Blender process."
+    ),
 )
 async def render_animation(
     ctx: Context,
@@ -323,15 +367,49 @@ async def render_animation(
     frame_start: int | None = None,
     frame_end: int | None = None,
     engine: str | None = None,
+    transport: str = "bridge",
+    blend_file: str | None = None,
 ) -> str:
-    params: dict[str, Any] = {"output_path": output_path}
-    if frame_start is not None:
-        params["frame_start"] = frame_start
-    if frame_end is not None:
-        params["frame_end"] = frame_end
-    if engine:
-        params["engine"] = engine
-    result = await _get_conn(ctx).send_command("render.animation", params)
+    if transport == "headless":
+        code = """
+import bpy
+scene = bpy.context.scene
+scene.render.filepath = args["output_path"]
+if args.get("frame_start") is not None:
+    scene.frame_start = args["frame_start"]
+if args.get("frame_end") is not None:
+    scene.frame_end = args["frame_end"]
+if args.get("engine"):
+    scene.render.engine = args["engine"]
+bpy.ops.render.render(animation=True)
+__result__ = {
+    "output_path": scene.render.filepath,
+    "engine": scene.render.engine,
+    "frame_start": scene.frame_start,
+    "frame_end": scene.frame_end,
+}
+"""
+        executor = HeadlessBlenderExecutor()
+        result = await executor.execute(
+            code=code,
+            args={
+                "output_path": output_path,
+                "frame_start": frame_start,
+                "frame_end": frame_end,
+                "engine": engine,
+            },
+            blend_file=blend_file,
+            factory_startup=False if blend_file else True,
+        )
+    else:
+        params: dict[str, Any] = {"output_path": output_path}
+        if frame_start is not None:
+            params["frame_start"] = frame_start
+        if frame_end is not None:
+            params["frame_end"] = frame_end
+        if engine:
+            params["engine"] = engine
+        result = await _get_conn(ctx).send_command("render.animation", params)
     return json.dumps(result, indent=2)
 
 
@@ -383,6 +461,148 @@ async def history_undo(ctx: Context) -> str:
 )
 async def history_redo(ctx: Context) -> str:
     result = await _get_conn(ctx).send_command("history.redo")
+    return json.dumps(result, indent=2)
+
+
+# -- Python execution tools --
+
+
+@mcp.tool(
+    name="blender_python_exec",
+    description=(
+        "Execute a Python script in Blender's context synchronously. "
+        "Provide either 'code' (inline Python string) or 'script_path' (path to a .py file), not both. "
+        "The script has access to 'bpy', 'mathutils', and an 'args' dict with your supplied arguments. "
+        "Set '__result__' in the script to return a JSON-serializable value. "
+        "Returns the result, captured stdout/stderr, and execution duration. "
+        "Use transport='bridge' for the live Blender add-on session, or transport='headless' to run the script "
+        "in a separate `blender -b` process. For long-running tasks like baking, use blender_python_exec_async."
+    ),
+)
+async def python_exec(
+    ctx: Context,
+    code: str | None = None,
+    script_path: str | None = None,
+    args: dict | None = None,
+    timeout_seconds: int | None = None,
+    transport: str = "bridge",
+    blend_file: str | None = None,
+    factory_startup: bool | None = None,
+) -> str:
+    if transport == "headless":
+        executor = HeadlessBlenderExecutor()
+        result = await executor.execute(
+            code=code,
+            script_path=script_path,
+            args=args,
+            timeout_seconds=timeout_seconds,
+            blend_file=blend_file,
+            factory_startup=factory_startup,
+        )
+    else:
+        params: dict[str, Any] = {}
+        if code is not None:
+            params["code"] = code
+        if script_path is not None:
+            params["script_path"] = script_path
+        if args is not None:
+            params["args"] = args
+        if timeout_seconds is not None:
+            params["timeout_seconds"] = timeout_seconds
+        result = await _get_conn(ctx).send_command("python.execute", params)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool(
+    name="blender_python_exec_async",
+    description=(
+        "Start a long-running Python script in Blender asynchronously. "
+        "Same parameters as blender_python_exec. Returns a job_id immediately. "
+        "Use blender_job_status to poll for completion, and blender_job_cancel to abort. "
+        "The script can check '__cancel_event__.is_set()' to detect cancellation. "
+        "Ideal for fluid baking, rigid body simulation, or heavy scene generation. "
+        "Use transport='headless' to run the job in a separate background Blender process."
+    ),
+)
+async def python_exec_async(
+    ctx: Context,
+    code: str | None = None,
+    script_path: str | None = None,
+    args: dict | None = None,
+    timeout_seconds: int | None = None,
+    transport: str = "bridge",
+    blend_file: str | None = None,
+    factory_startup: bool | None = None,
+) -> str:
+    if transport == "headless":
+        executor = HeadlessBlenderExecutor()
+        job_id = await HEADLESS_JOB_MANAGER.create_job(
+            executor,
+            code=code,
+            script_path=script_path,
+            args=args,
+            timeout_seconds=timeout_seconds,
+            blend_file=blend_file,
+            factory_startup=factory_startup,
+        )
+        result = {"job_id": job_id}
+    else:
+        params: dict[str, Any] = {}
+        if code is not None:
+            params["code"] = code
+        if script_path is not None:
+            params["script_path"] = script_path
+        if args is not None:
+            params["args"] = args
+        if timeout_seconds is not None:
+            params["timeout_seconds"] = timeout_seconds
+        result = await _get_conn(ctx).send_command("python.execute_async", params)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool(
+    name="blender_job_status",
+    description=(
+        "Get the status of an async Blender job. Returns job_id, status "
+        "(queued/running/succeeded/failed/cancelled), timestamps, result, stdout, stderr, and error. "
+        "Poll this after starting a job with blender_python_exec_async."
+    ),
+)
+async def job_status(ctx: Context, job_id: str) -> str:
+    if job_id.startswith("headless-job-"):
+        result = HEADLESS_JOB_MANAGER.get_status(job_id)
+    else:
+        result = await _get_conn(ctx).send_command("job.status", {"job_id": job_id})
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool(
+    name="blender_job_cancel",
+    description=(
+        "Cancel a running or queued async Blender job. "
+        "The job's __cancel_event__ is set; scripts that check it will stop gracefully."
+    ),
+)
+async def job_cancel(ctx: Context, job_id: str) -> str:
+    if job_id.startswith("headless-job-"):
+        result = await HEADLESS_JOB_MANAGER.cancel(job_id)
+    else:
+        result = await _get_conn(ctx).send_command("job.cancel", {"job_id": job_id})
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool(
+    name="blender_job_list",
+    description="List known async Blender jobs with their IDs, statuses, and creation timestamps.",
+)
+async def job_list(ctx: Context) -> str:
+    headless_jobs = HEADLESS_JOB_MANAGER.list_jobs()["jobs"]
+    try:
+        bridge_result = await _get_conn(ctx).send_command("job.list")
+        bridge_jobs = bridge_result.get("jobs", [])
+    except Exception:
+        bridge_jobs = []
+    result = {"jobs": bridge_jobs + headless_jobs}
     return json.dumps(result, indent=2)
 
 

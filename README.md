@@ -2,7 +2,7 @@
 
 Control Blender from AI assistants like Claude Desktop using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io).
 
-**22 tools** across 6 namespaces — create objects, assign materials, render images, export scenes, and more, all through natural language.
+**27 tools** across 7 namespaces — create objects, assign materials, render images, export scenes, execute Python scripts, manage async jobs, and more, all through natural language.
 
 ![Demo render — scene built entirely through MCP tools](docs/images/demo_render.png)
 
@@ -201,6 +201,95 @@ Here's what you can ask Claude to do once everything is connected:
 >
 > "Redo what was just undone"
 
+### 🐍 Python Script Execution
+> "Run this Blender Python: `bpy.ops.mesh.primitive_monkey_add(location=(0,0,2))`"
+>
+> "Execute the fluid_domain.py script from the library with resolution 128"
+>
+> "Start an async bake job for the fluid simulation and tell me the job ID"
+>
+> "Check the status of job job-a1b2c3d4"
+
+### 🐍 Python Execution — Programmatic Examples
+
+#### Inline code — create a fluid domain
+
+```json
+{
+  "tool": "blender_python_exec",
+  "args": {
+    "code": "import bpy\nbpy.ops.mesh.primitive_cube_add(size=4, location=(0,0,2))\ndomain = bpy.context.active_object\ndomain.name = 'FluidDomain'\nbpy.ops.object.modifier_add(type='FLUID')\ndomain.modifiers['Fluid'].fluid_type = 'DOMAIN'\nsettings = domain.modifiers['Fluid'].domain_settings\nsettings.domain_type = 'LIQUID'\nsettings.resolution_max = 64\n__result__ = {'domain': domain.name, 'resolution': 64}",
+    "args": {"resolution": 64}
+  }
+}
+```
+
+#### Script file — set up colliders
+
+```json
+{
+  "tool": "blender_python_exec",
+  "args": {
+    "script_path": "/path/to/scripts/library/effector.py",
+    "args": {
+      "objects": ["Ground", "Building_01", "Building_02"],
+      "effector_type": "COLLISION"
+    }
+  }
+}
+```
+
+#### Animate a camera with keyframes
+
+```json
+{
+  "tool": "blender_python_exec",
+  "args": {
+    "script_path": "/path/to/scripts/library/keyframes.py",
+    "args": {
+      "keyframes": [
+        {"object": "Camera", "frame": 1, "location": [20, -20, 10]},
+        {"object": "Camera", "frame": 120, "location": [5, -10, 6]},
+        {"object": "Camera", "frame": 250, "location": [0, -5, 3]}
+      ]
+    }
+  }
+}
+```
+
+#### Start a bake and poll for completion
+
+```json
+{"tool": "blender_python_exec_async", "args": {"code": "import bpy\nbpy.ops.fluid.bake_all()\n__result__ = {'baked': True}", "timeout_seconds": 1800}}
+```
+
+Response: `{"job_id": "job-f8e2a1b3"}`
+
+Then poll:
+```json
+{"tool": "blender_job_status", "args": {"job_id": "job-f8e2a1b3"}}
+```
+
+### Script Library
+
+Pre-built scripts in `scripts/library/` for common Blender tasks. Use with `blender_python_exec` via `script_path`:
+
+| Script | Description |
+|---|---|
+| `fluid_domain.py` | Create a Mantaflow fluid domain |
+| `fluid_inflow.py` | Create an inflow source |
+| `effector.py` | Set objects as collision effectors |
+| `rigid_body.py` | Add rigid body physics |
+| `frame_range.py` | Set scene frame range |
+| `camera.py` | Create and configure a camera |
+| `keyframes.py` | Insert transform keyframes |
+| `collections.py` | Organize objects into collections |
+| `apply_transforms.py` | Apply transforms to objects |
+| `save_blend.py` | Save the .blend file |
+
+See `scripts/library/README.md` for full argument docs and an end-to-end dam-break setup walkthrough.
+For heavy physics workflows, prefer `transport="headless"` on `blender_python_exec` / `blender_python_exec_async`. That runs the script in a separate `blender -b` process instead of the live add-on session.
+
 ## Example Session
 
 Here's a real session transcript showing every category of tool in action.
@@ -339,12 +428,24 @@ All output below was produced by a live Blender 4.0.2 instance controlled throug
 | `blender_history_undo` | Undo the last operation |
 | `blender_history_redo` | Redo the last undone operation |
 
+### Python Execution
+
+| Tool | Description |
+|---|---|
+| `blender_python_exec` | Execute a Python script synchronously in Blender. Provide `code` or `script_path`, optional `args`, `timeout_seconds`, and `transport` (`bridge` or `headless`). Returns result, stdout, stderr, and timeout/cancel metadata. |
+| `blender_python_exec_async` | Start a long-running script asynchronously. Returns a `job_id`. Supports `transport="headless"` for separate background Blender processes. |
+| `blender_job_status` | Poll an async job's status, result, stdout, stderr, and error. |
+| `blender_job_cancel` | Cancel a running or queued async job. |
+| `blender_job_list` | List known async jobs with IDs, status, and creation time. |
+
 ## Safety Features
 
-- **Automatic undo push** — every mutation tool pushes an undo step first, so you can always roll back
+- **Automatic undo push** — object/material mutation tools push an undo step first; `python.execute` is excluded because multi-step physics scripts were unstable with per-request undo snapshots
 - **Safe Mode** — enable in add-on preferences to restrict file access to the project directory only
 - **Tool whitelist** — limit which commands the bridge will accept
-- **No arbitrary code execution** — the bridge only accepts predefined commands, never `exec` or `eval`
+- **Script path restrictions** — `script_path` must be under configured approved roots
+- **Inline code toggle** — disable inline code execution via add-on preferences
+- **Module blocklist** — `subprocess`, `shutil`, `socket`, `webbrowser`, `ctypes`, `multiprocessing` are blocked by default during script execution
 
 ## Add-on Preferences
 
@@ -354,6 +455,8 @@ In Blender → Edit → Preferences → Add-ons → Blender MCP Bridge:
 |---|---|---|
 | **Safe Mode** | Restrict file I/O to project directory | Off |
 | **Port** | TCP port for the MCP bridge | 9876 |
+| **Allow Inline Code** | Allow `python.execute` to run inline code strings | On |
+| **Approved Script Roots** | Semicolon-separated directories for script file access | (blend file dir) |
 
 ## Headless / Background Mode
 
@@ -398,15 +501,25 @@ pytest tests/ -v
 ```
 blender-mcp-server/
 ├── addon/
-│   └── __init__.py          # Blender add-on — TCP server + command handlers
+│   └── __init__.py          # Blender add-on — TCP server + command handlers + job manager
 ├── src/blender_mcp_server/
 │   ├── __init__.py
-│   └── server.py            # MCP server — stdio transport + 22 tool definitions
+│   └── server.py            # MCP server — stdio transport + 27 tool definitions
+├── scripts/
+│   ├── library/             # Reusable Blender scripts for common tasks
+│   │   ├── fluid_domain.py, fluid_inflow.py, effector.py, ...
+│   │   └── README.md
+│   ├── demos/               # End-to-end demo scenes
+│   │   ├── dam_break_scene.py   # Monolithic dam-break scene builder
+│   │   ├── run_dam_break.py     # Step-by-step bridge caller
+│   │   └── README.md            # Demo docs + follow-up tickets
+│   └── blender_bridge_request.py, ...  # Direct bridge test helpers
 ├── tests/
 │   ├── test_addon.py        # Add-on tests (mocked bpy)
 │   └── test_server.py       # MCP server tests
 ├── docs/
 │   ├── architecture.md      # Architecture documentation
+│   ├── python-execute-design.md  # Python execution design doc
 │   └── images/
 │       └── demo_render.png  # Render from demo session
 ├── pyproject.toml
@@ -418,7 +531,7 @@ blender-mcp-server/
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes with tests
-4. Run `pytest tests/ -v` to verify all 23 tests pass
+4. Run `pytest tests/ -v` to verify all 83 tests pass
 5. Submit a pull request
 
 ## License

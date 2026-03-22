@@ -8,8 +8,16 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from blender_mcp_server.server import (
     mcp,
     BlenderConnection,
+    HEADLESS_JOB_MANAGER,
+    python_exec,
+    python_exec_async,
+    render_still,
+    job_status,
+    job_cancel,
+    job_list,
     main,
 )
+from blender_mcp_server.headless import HeadlessBlenderExecutor
 
 
 class TestToolRegistration:
@@ -70,8 +78,19 @@ class TestToolRegistration:
         assert "blender_history_undo" in names
         assert "blender_history_redo" in names
 
+    def test_python_exec_tools_registered(self):
+        names = self._get_tool_names()
+        assert "blender_python_exec" in names
+        assert "blender_python_exec_async" in names
+
+    def test_job_tools_registered(self):
+        names = self._get_tool_names()
+        assert "blender_job_status" in names
+        assert "blender_job_cancel" in names
+        assert "blender_job_list" in names
+
     def test_total_tool_count(self):
-        assert len(self._get_tool_names()) == 22
+        assert len(self._get_tool_names()) == 27
 
     def test_all_tools_have_descriptions(self):
         for tool in mcp._tool_manager._tools.values():
@@ -165,6 +184,144 @@ class TestBlenderConnection:
         with patch("asyncio.open_connection", return_value=(mock_reader, mock_writer)):
             result = await conn.send_command("scene.get_info")
             assert result == {}
+
+
+class TestHeadlessExecutor:
+    @pytest.mark.asyncio
+    async def test_execute_parses_structured_payload(self):
+        executor = HeadlessBlenderExecutor(blender_binary="blender")
+        payload = {
+            "result": {"ok": True},
+            "stdout": "inner stdout\n",
+            "stderr": "",
+            "error": None,
+            "timed_out": False,
+            "cancelled": False,
+        }
+
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(
+            return_value=(
+                (
+                    "noise before\n"
+                    "__BLENDER_MCP_RESULT__=" + json.dumps(payload) + "\n"
+                ).encode(),
+                b"",
+            )
+        )
+        proc.returncode = 0
+
+        with patch("asyncio.create_subprocess_exec", return_value=proc):
+            result = await executor.execute(code="__result__ = {'ok': True}")
+
+        assert result["result"] == {"ok": True}
+        assert "noise before" in result["stdout"]
+        assert "inner stdout" in result["stdout"]
+        assert result["error"] is None
+
+
+class TestHeadlessTransportTools:
+    @pytest.mark.asyncio
+    async def test_python_exec_uses_headless_transport(self):
+        ctx = MagicMock()
+        ctx.request_context.lifespan_context = MagicMock()
+
+        with patch(
+            "blender_mcp_server.server.HeadlessBlenderExecutor.execute",
+            new=AsyncMock(return_value={"result": {"mode": "headless"}}),
+        ) as execute:
+            result = await python_exec(
+                ctx,
+                code="__result__ = {'mode': 'headless'}",
+                transport="headless",
+            )
+
+        assert json.loads(result) == {"result": {"mode": "headless"}}
+        execute.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_headless_async_job_lifecycle(self):
+        HEADLESS_JOB_MANAGER._jobs.clear()
+        ctx = MagicMock()
+        ctx.request_context.lifespan_context = MagicMock()
+
+        with patch(
+            "blender_mcp_server.server.HeadlessBlenderExecutor.execute",
+            new=AsyncMock(return_value={"result": {"ok": True}, "stdout": "", "stderr": "", "error": None, "cancelled": False, "timed_out": False}),
+        ):
+            created = json.loads(
+                await python_exec_async(
+                    ctx,
+                    code="__result__ = {'ok': True}",
+                    transport="headless",
+                )
+            )
+            job_id = created["job_id"]
+            await asyncio.sleep(0)
+            status = json.loads(await job_status(ctx, job_id))
+
+        assert job_id.startswith("headless-job-")
+        assert status["status"] == "succeeded"
+        assert status["result"] == {"ok": True}
+
+    @pytest.mark.asyncio
+    async def test_render_still_uses_headless_transport(self):
+        ctx = MagicMock()
+        ctx.request_context.lifespan_context = MagicMock()
+
+        with patch(
+            "blender_mcp_server.server.HeadlessBlenderExecutor.execute",
+            new=AsyncMock(return_value={"result": {"output_path": "/tmp/test.png"}}),
+        ) as execute:
+            result = await render_still(
+                ctx,
+                output_path="/tmp/test.png",
+                transport="headless",
+                blend_file="/tmp/test.blend",
+            )
+
+        assert json.loads(result) == {"result": {"output_path": "/tmp/test.png"}}
+        execute.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_job_list_merges_headless_jobs(self):
+        HEADLESS_JOB_MANAGER._jobs.clear()
+        HEADLESS_JOB_MANAGER._jobs["headless-job-1"] = {
+            "job_id": "headless-job-1",
+            "status": "queued",
+            "created_at": 1.0,
+        }
+        ctx = MagicMock()
+        ctx.request_context.lifespan_context = MagicMock()
+        ctx.request_context.lifespan_context.send_command = AsyncMock(
+            return_value={"jobs": [{"job_id": "bridge-job-1", "status": "running", "created_at": 2.0}]}
+        )
+        result = json.loads(await job_list(ctx))
+
+        ids = {job["job_id"] for job in result["jobs"]}
+        assert ids == {"bridge-job-1", "headless-job-1"}
+
+    @pytest.mark.asyncio
+    async def test_headless_job_cancel(self):
+        HEADLESS_JOB_MANAGER._jobs.clear()
+        ctx = MagicMock()
+        ctx.request_context.lifespan_context = MagicMock()
+
+        async def slow_execute(**_kwargs):
+            await asyncio.sleep(10)
+            return {"result": None, "stdout": "", "stderr": "", "error": None, "cancelled": False, "timed_out": False}
+
+        with patch(
+            "blender_mcp_server.server.HeadlessBlenderExecutor.execute",
+            new=slow_execute,
+        ):
+            created = json.loads(
+                await python_exec_async(ctx, code="pass", transport="headless")
+            )
+            job_id = created["job_id"]
+            cancelled = json.loads(await job_cancel(ctx, job_id))
+
+        assert cancelled["status"] == "cancelled"
 
 
 class TestMCPProtocol:
