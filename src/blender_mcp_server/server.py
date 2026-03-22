@@ -386,6 +386,95 @@ async def history_redo(ctx: Context) -> str:
     return json.dumps(result, indent=2)
 
 
+# -- Python execution tools --
+
+
+@mcp.tool(
+    name="blender_python_exec",
+    description=(
+        "Execute a Python script in Blender's context synchronously. "
+        "Provide either 'code' (inline Python string) or 'script_path' (path to a .py file), not both. "
+        "The script has access to 'bpy', 'mathutils', and an 'args' dict with your supplied arguments. "
+        "Set '__result__' in the script to return a JSON-serializable value. "
+        "Returns the result, captured stdout/stderr, and execution duration. "
+        "Use this for quick operations; for long-running tasks like baking, use blender_python_exec_async."
+    ),
+)
+async def python_exec(
+    ctx: Context,
+    code: str | None = None,
+    script_path: str | None = None,
+    args: dict | None = None,
+    timeout_seconds: int | None = None,
+) -> str:
+    params: dict[str, Any] = {}
+    if code is not None:
+        params["code"] = code
+    if script_path is not None:
+        params["script_path"] = script_path
+    if args is not None:
+        params["args"] = args
+    if timeout_seconds is not None:
+        params["timeout_seconds"] = timeout_seconds
+    result = await _get_conn(ctx).send_command("python.execute", params)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool(
+    name="blender_python_exec_async",
+    description=(
+        "Start a long-running Python script in Blender asynchronously. "
+        "Same parameters as blender_python_exec. Returns a job_id immediately. "
+        "Use blender_job_status to poll for completion, and blender_job_cancel to abort. "
+        "The script can check '__cancel_event__.is_set()' to detect cancellation. "
+        "Ideal for fluid baking, rigid body simulation, or heavy scene generation."
+    ),
+)
+async def python_exec_async(
+    ctx: Context,
+    code: str | None = None,
+    script_path: str | None = None,
+    args: dict | None = None,
+    timeout_seconds: int | None = None,
+) -> str:
+    params: dict[str, Any] = {}
+    if code is not None:
+        params["code"] = code
+    if script_path is not None:
+        params["script_path"] = script_path
+    if args is not None:
+        params["args"] = args
+    if timeout_seconds is not None:
+        params["timeout_seconds"] = timeout_seconds
+    result = await _get_conn(ctx).send_command("python.execute_async", params)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool(
+    name="blender_job_status",
+    description=(
+        "Get the status of an async Blender job. Returns job_id, status "
+        "(queued/running/succeeded/failed/cancelled), timestamps, result, stdout, stderr, and error. "
+        "Poll this after starting a job with blender_python_exec_async."
+    ),
+)
+async def job_status(ctx: Context, job_id: str) -> str:
+    result = await _get_conn(ctx).send_command("job.status", {"job_id": job_id})
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool(
+    name="blender_job_cancel",
+    description=(
+        "Cancel a running or queued async Blender job. "
+        "The job's __cancel_event__ is set; scripts that check it will stop gracefully."
+    ),
+)
+async def job_cancel(ctx: Context, job_id: str) -> str:
+    result = await _get_conn(ctx).send_command("job.cancel", {"job_id": job_id})
+    return json.dumps(result, indent=2)
+
+
 def main():
     mcp.run(transport="stdio")
 

@@ -2,7 +2,7 @@
 
 Control Blender from AI assistants like Claude Desktop using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io).
 
-**22 tools** across 6 namespaces — create objects, assign materials, render images, export scenes, and more, all through natural language.
+**26 tools** across 7 namespaces — create objects, assign materials, render images, export scenes, execute Python scripts, manage async jobs, and more, all through natural language.
 
 ![Demo render — scene built entirely through MCP tools](docs/images/demo_render.png)
 
@@ -339,12 +339,23 @@ All output below was produced by a live Blender 4.0.2 instance controlled throug
 | `blender_history_undo` | Undo the last operation |
 | `blender_history_redo` | Redo the last undone operation |
 
+### Python Execution
+
+| Tool | Description |
+|---|---|
+| `blender_python_exec` | Execute a Python script synchronously in Blender's context. Provide `code` or `script_path`, optional `args` and `timeout_seconds`. Returns result, stdout, stderr. |
+| `blender_python_exec_async` | Start a long-running script asynchronously. Returns a `job_id`. Use for baking, heavy generation. |
+| `blender_job_status` | Poll an async job's status, result, stdout, stderr, and error. |
+| `blender_job_cancel` | Cancel a running or queued async job. |
+
 ## Safety Features
 
 - **Automatic undo push** — every mutation tool pushes an undo step first, so you can always roll back
 - **Safe Mode** — enable in add-on preferences to restrict file access to the project directory only
 - **Tool whitelist** — limit which commands the bridge will accept
-- **No arbitrary code execution** — the bridge only accepts predefined commands, never `exec` or `eval`
+- **Script path restrictions** — `script_path` must be under configured approved roots
+- **Inline code toggle** — disable inline code execution via add-on preferences
+- **Module blocklist** — `subprocess`, `shutil`, `webbrowser`, `ctypes`, `multiprocessing` are blocked by default during script execution
 
 ## Add-on Preferences
 
@@ -354,6 +365,8 @@ In Blender → Edit → Preferences → Add-ons → Blender MCP Bridge:
 |---|---|---|
 | **Safe Mode** | Restrict file I/O to project directory | Off |
 | **Port** | TCP port for the MCP bridge | 9876 |
+| **Allow Inline Code** | Allow `python.execute` to run inline code strings | On |
+| **Approved Script Roots** | Semicolon-separated directories for script file access | (blend file dir) |
 
 ## Headless / Background Mode
 
@@ -398,15 +411,16 @@ pytest tests/ -v
 ```
 blender-mcp-server/
 ├── addon/
-│   └── __init__.py          # Blender add-on — TCP server + command handlers
+│   └── __init__.py          # Blender add-on — TCP server + command handlers + job manager
 ├── src/blender_mcp_server/
 │   ├── __init__.py
-│   └── server.py            # MCP server — stdio transport + 22 tool definitions
+│   └── server.py            # MCP server — stdio transport + 26 tool definitions
 ├── tests/
 │   ├── test_addon.py        # Add-on tests (mocked bpy)
 │   └── test_server.py       # MCP server tests
 ├── docs/
 │   ├── architecture.md      # Architecture documentation
+│   ├── python-execute-design.md  # Python execution design doc
 │   └── images/
 │       └── demo_render.png  # Render from demo session
 ├── pyproject.toml
@@ -418,7 +432,7 @@ blender-mcp-server/
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes with tests
-4. Run `pytest tests/ -v` to verify all 23 tests pass
+4. Run `pytest tests/ -v` to verify all 55 tests pass
 5. Submit a pull request
 
 ## License

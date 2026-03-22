@@ -70,6 +70,8 @@ The Blender MCP Server enables AI assistants (Claude Desktop, etc.) to control B
 | `blender.render.*` | Render stills and animations |
 | `blender.export.*` | Export to glTF, OBJ, FBX |
 | `blender.history.*` | Undo/redo operations |
+| `blender.python.*` | Execute Python scripts (sync and async) |
+| `blender.job.*` | Query, cancel, and list async jobs |
 
 ## Lifecycle
 

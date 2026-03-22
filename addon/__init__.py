@@ -10,12 +10,16 @@ bl_info = {
 
 import bpy
 import json
+import io
 import os
 import queue
 import socket
 import threading
 import traceback
 import logging
+import time
+import uuid
+from contextlib import redirect_stdout, redirect_stderr
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -28,6 +32,15 @@ BUFFER_SIZE = 65536
 SAFE_MODE = False
 ALLOWED_PATHS: list[str] = []
 TOOL_WHITELIST: set[str] | None = None  # None = all tools allowed
+
+# Python execution settings (set via addon preferences)
+ALLOW_INLINE_CODE = True
+APPROVED_SCRIPT_ROOTS: list[str] = []
+BLOCKED_MODULES: set[str] = {"subprocess", "shutil", "webbrowser", "ctypes", "multiprocessing"}
+DEFAULT_SYNC_TIMEOUT = 30
+DEFAULT_ASYNC_TIMEOUT = 300
+MAX_SYNC_TIMEOUT = 300
+MAX_ASYNC_TIMEOUT = 3600
 
 
 class CommandHandler:
@@ -60,6 +73,11 @@ class CommandHandler:
         self._handlers["export.fbx"] = self._export_fbx
         self._handlers["history.undo"] = self._history_undo
         self._handlers["history.redo"] = self._history_redo
+        self._handlers["python.execute"] = self._python_execute
+        self._handlers["python.execute_async"] = self._python_execute_async
+        self._handlers["job.status"] = self._job_status
+        self._handlers["job.cancel"] = self._job_cancel
+        self._handlers["job.list"] = self._job_list
 
     def handle(self, command: str, params: dict) -> Any:
         # Security: check tool whitelist
@@ -422,6 +440,308 @@ class CommandHandler:
         bpy.ops.ed.redo()
         return {"action": "redo"}
 
+    # -- Python execution tools --
+
+    @staticmethod
+    def _validate_script_path(script_path: str) -> str:
+        """Validate that a script path is under an approved root directory."""
+        real_path = os.path.realpath(script_path)
+        if not os.path.isfile(real_path):
+            raise FileNotFoundError(f"Script not found: {script_path}")
+        if not real_path.endswith(".py"):
+            raise ValueError(f"Script must be a .py file: {script_path}")
+
+        roots = APPROVED_SCRIPT_ROOTS
+        if not roots:
+            blend_dir = (
+                os.path.dirname(bpy.data.filepath) if bpy.data.filepath else os.getcwd()
+            )
+            roots = [blend_dir]
+
+        for root in roots:
+            if real_path.startswith(os.path.realpath(root) + os.sep) or real_path == os.path.realpath(root):
+                return real_path
+        raise PermissionError(
+            f"Script path denied: '{script_path}' is outside approved roots. "
+            f"Approved: {roots}"
+        )
+
+    @staticmethod
+    def _make_namespace(args: dict, cancel_event: threading.Event | None = None) -> dict:
+        """Build the execution namespace for exec()."""
+        import mathutils
+        ns: dict[str, Any] = {
+            "bpy": bpy,
+            "mathutils": mathutils,
+            "args": args or {},
+            "__result__": None,
+        }
+        if cancel_event is not None:
+            ns["__cancel_event__"] = cancel_event
+        return ns
+
+    @staticmethod
+    def _safe_json(value: Any) -> Any:
+        """Ensure a value is JSON-serializable, falling back to repr()."""
+        if value is None:
+            return None
+        try:
+            json.dumps(value)
+            return value
+        except (TypeError, ValueError):
+            return repr(value)
+
+    def _run_code(self, code: str, namespace: dict, timeout_seconds: float) -> dict:
+        """Execute code with stdout/stderr capture and timeout."""
+        stdout_buf = io.StringIO()
+        stderr_buf = io.StringIO()
+        start = time.monotonic()
+
+        hook = _BlockedImportHook(BLOCKED_MODULES)
+        hook.install()
+        try:
+            with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
+                exec(compile(code, "<mcp-script>", "exec"), namespace)
+        except Exception as exc:
+            elapsed = time.monotonic() - start
+            tb_lines = traceback.format_exception(type(exc), exc, exc.__traceback__)
+            # Filter out internal bridge frames
+            filtered = [l for l in tb_lines if "addon/__init__" not in l]
+            return {
+                "result": None,
+                "stdout": stdout_buf.getvalue(),
+                "stderr": stderr_buf.getvalue(),
+                "error": "".join(filtered).strip(),
+                "duration_seconds": round(elapsed, 4),
+            }
+        finally:
+            hook.uninstall()
+
+        elapsed = time.monotonic() - start
+        return {
+            "result": self._safe_json(namespace.get("__result__")),
+            "stdout": stdout_buf.getvalue(),
+            "stderr": stderr_buf.getvalue(),
+            "error": None,
+            "duration_seconds": round(elapsed, 4),
+        }
+
+    def _python_execute(self, params: dict) -> dict:
+        code = params.get("code")
+        script_path = params.get("script_path")
+        args = params.get("args", {})
+        timeout_seconds = min(
+            params.get("timeout_seconds", DEFAULT_SYNC_TIMEOUT), MAX_SYNC_TIMEOUT
+        )
+
+        if code and script_path:
+            raise ValueError("Provide either 'code' or 'script_path', not both")
+        if not code and not script_path:
+            raise ValueError("Either 'code' or 'script_path' must be provided")
+
+        if code is not None:
+            if not ALLOW_INLINE_CODE:
+                raise PermissionError(
+                    "Inline code execution is disabled. Use script_path instead."
+                )
+        else:
+            validated = self._validate_script_path(script_path)
+            with open(validated, "r") as f:
+                code = f.read()
+
+        namespace = self._make_namespace(args)
+        return self._run_code(code, namespace, timeout_seconds)
+
+    def _python_execute_async(self, params: dict) -> dict:
+        code = params.get("code")
+        script_path = params.get("script_path")
+        args = params.get("args", {})
+        timeout_seconds = min(
+            params.get("timeout_seconds", DEFAULT_ASYNC_TIMEOUT), MAX_ASYNC_TIMEOUT
+        )
+
+        if code and script_path:
+            raise ValueError("Provide either 'code' or 'script_path', not both")
+        if not code and not script_path:
+            raise ValueError("Either 'code' or 'script_path' must be provided")
+
+        if code is not None:
+            if not ALLOW_INLINE_CODE:
+                raise PermissionError(
+                    "Inline code execution is disabled. Use script_path instead."
+                )
+        else:
+            validated = self._validate_script_path(script_path)
+            with open(validated, "r") as f:
+                code = f.read()
+
+        job_id = _job_manager.create_job(code, args, timeout_seconds, self)
+        return {"job_id": job_id}
+
+    def _job_status(self, params: dict) -> dict:
+        job_id = params.get("job_id")
+        if not job_id:
+            raise ValueError("'job_id' is required")
+        return _job_manager.get_status(job_id)
+
+    def _job_cancel(self, params: dict) -> dict:
+        job_id = params.get("job_id")
+        if not job_id:
+            raise ValueError("'job_id' is required")
+        return _job_manager.cancel(job_id)
+
+    def _job_list(self, params: dict) -> dict:
+        return _job_manager.list_jobs()
+
+
+class _BlockedImportHook:
+    """Temporary import hook that blocks specified modules during exec()."""
+
+    def __init__(self, blocked: set[str]):
+        self._blocked = blocked
+        self._original_import = None
+
+    def install(self):
+        import builtins
+        self._original_import = builtins.__import__
+
+        blocked = self._blocked
+
+        def guarded_import(name, *a, **kw):
+            top_level = name.split(".")[0]
+            if top_level in blocked:
+                raise ImportError(
+                    f"Import of '{name}' is blocked by MCP safety policy"
+                )
+            return self._original_import(name, *a, **kw)
+
+        builtins.__import__ = guarded_import
+
+    def uninstall(self):
+        if self._original_import is not None:
+            import builtins
+            builtins.__import__ = self._original_import
+            self._original_import = None
+
+
+class JobManager:
+    """Manages async job lifecycle for long-running Blender scripts."""
+
+    def __init__(self):
+        self._jobs: dict[str, dict[str, Any]] = {}
+        self._lock = threading.Lock()
+
+    def create_job(
+        self,
+        code: str,
+        args: dict,
+        timeout_seconds: float,
+        handler: CommandHandler,
+    ) -> str:
+        job_id = f"job-{uuid.uuid4().hex[:8]}"
+        now = time.time()
+        cancel_event = threading.Event()
+
+        job = {
+            "job_id": job_id,
+            "status": "queued",
+            "created_at": now,
+            "started_at": None,
+            "completed_at": None,
+            "result": None,
+            "stdout": "",
+            "stderr": "",
+            "error": None,
+            "code": code,
+            "args": args,
+            "timeout_seconds": timeout_seconds,
+            "cancel_event": cancel_event,
+            "handler": handler,
+        }
+
+        with self._lock:
+            self._jobs[job_id] = job
+
+        bpy.app.timers.register(
+            lambda: self._execute_job(job_id), first_interval=0.01
+        )
+        return job_id
+
+    def _execute_job(self, job_id: str) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job or job["status"] != "queued":
+                return
+            job["status"] = "running"
+            job["started_at"] = time.time()
+
+        cancel_event = job["cancel_event"]
+        if cancel_event.is_set():
+            with self._lock:
+                job["status"] = "cancelled"
+                job["completed_at"] = time.time()
+            return
+
+        handler = job["handler"]
+        namespace = handler._make_namespace(job["args"], cancel_event)
+        result = handler._run_code(job["code"], namespace, job["timeout_seconds"])
+
+        with self._lock:
+            job["result"] = result.get("result")
+            job["stdout"] = result.get("stdout", "")
+            job["stderr"] = result.get("stderr", "")
+            job["error"] = result.get("error")
+            job["status"] = "failed" if result.get("error") else "succeeded"
+            job["completed_at"] = time.time()
+
+    def get_status(self, job_id: str) -> dict:
+        with self._lock:
+            job = self._jobs.get(job_id)
+        if not job:
+            raise ValueError(f"Unknown job: {job_id}")
+        return {
+            "job_id": job["job_id"],
+            "status": job["status"],
+            "created_at": job["created_at"],
+            "started_at": job["started_at"],
+            "completed_at": job["completed_at"],
+            "result": job["result"],
+            "stdout": job["stdout"],
+            "stderr": job["stderr"],
+            "error": job["error"],
+        }
+
+    def cancel(self, job_id: str) -> dict:
+        with self._lock:
+            job = self._jobs.get(job_id)
+        if not job:
+            raise ValueError(f"Unknown job: {job_id}")
+
+        job["cancel_event"].set()
+
+        with self._lock:
+            if job["status"] in ("queued", "running"):
+                job["status"] = "cancelled"
+                job["completed_at"] = time.time()
+
+        return {"job_id": job_id, "status": job["status"]}
+
+    def list_jobs(self) -> dict:
+        with self._lock:
+            jobs = [
+                {
+                    "job_id": j["job_id"],
+                    "status": j["status"],
+                    "created_at": j["created_at"],
+                }
+                for j in self._jobs.values()
+            ]
+        return {"jobs": jobs}
+
+
+# Global job manager instance
+_job_manager = JobManager()
+
 
 class BlenderMCPServer:
     """TCP socket server running inside Blender."""
@@ -520,6 +840,7 @@ class BlenderMCPServer:
         "material.assign",
         "material.set_color",
         "material.set_texture",
+        "python.execute",
     }
 
     def _submit_request(self, request: dict) -> dict:
@@ -581,11 +902,25 @@ class MCP_AddonPreferences(bpy.types.AddonPreferences):
         min=1024,
         max=65535,
     )
+    allow_inline_code: bpy.props.BoolProperty(
+        name="Allow Inline Code",
+        description="Allow python.execute to run inline code strings. Disable to only allow script files",
+        default=True,
+    )
+    approved_script_roots: bpy.props.StringProperty(
+        name="Approved Script Roots",
+        description="Semicolon-separated list of directories from which script files may be loaded",
+        default="",
+    )
 
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "safe_mode")
         layout.prop(self, "port")
+        layout.separator()
+        layout.label(text="Python Execution")
+        layout.prop(self, "allow_inline_code")
+        layout.prop(self, "approved_script_roots")
 
 
 class MCP_PT_Panel(bpy.types.Panel):

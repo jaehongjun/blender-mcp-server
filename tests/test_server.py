@@ -70,8 +70,18 @@ class TestToolRegistration:
         assert "blender_history_undo" in names
         assert "blender_history_redo" in names
 
+    def test_python_exec_tools_registered(self):
+        names = self._get_tool_names()
+        assert "blender_python_exec" in names
+        assert "blender_python_exec_async" in names
+
+    def test_job_tools_registered(self):
+        names = self._get_tool_names()
+        assert "blender_job_status" in names
+        assert "blender_job_cancel" in names
+
     def test_total_tool_count(self):
-        assert len(self._get_tool_names()) == 22
+        assert len(self._get_tool_names()) == 26
 
     def test_all_tools_have_descriptions(self):
         for tool in mcp._tool_manager._tools.values():
