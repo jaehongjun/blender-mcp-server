@@ -141,9 +141,7 @@ for dname in debris_names:
 # 7. Fluid domain
 # ---------------------------------------------------------------------------
 domain_size = 22
-bpy.ops.mesh.primitive_cube_add(size=domain_size, location=(0, 0, 5))
-domain = bpy.context.active_object
-domain.name = "FluidDomain"
+domain = create_cube_object("FluidDomain", domain_size, (0, 0, 5))
 dmod = domain.modifiers.new(name="Fluid", type='FLUID')
 dmod.fluid_type = 'DOMAIN'
 dsettings = dmod.domain_settings

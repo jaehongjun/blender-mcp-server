@@ -15,6 +15,34 @@ Result:
 """
 import bpy
 
+
+def create_cube_mesh(name: str, size: float):
+    half = size / 2.0
+    verts = [
+        (-half, -half, -half),
+        (half, -half, -half),
+        (half, half, -half),
+        (-half, half, -half),
+        (-half, -half, half),
+        (half, -half, half),
+        (half, half, half),
+        (-half, half, half),
+    ]
+    faces = [
+        (0, 1, 2, 3),
+        (4, 5, 6, 7),
+        (0, 1, 5, 4),
+        (1, 2, 6, 5),
+        (2, 3, 7, 6),
+        (3, 0, 4, 7),
+    ]
+    mesh = bpy.data.meshes.new(f"{name}Mesh")
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    return obj
+
 name = args.get("domain_name", "FluidDomain")
 location = args.get("location", [0, 0, 2])
 size = args.get("size", 4.0)
@@ -22,13 +50,15 @@ resolution = args.get("resolution", 64)
 cache_dir = args.get("cache_dir", "//fluid_cache")
 domain_type = args.get("domain_type", "LIQUID")
 
-bpy.ops.mesh.primitive_cube_add(size=size, location=tuple(location))
-domain = bpy.context.active_object
-domain.name = name
+domain = create_cube_mesh(name, size)
+domain.location = tuple(location)
 
-bpy.ops.object.modifier_add(type='FLUID')
-domain.modifiers["Fluid"].fluid_type = 'DOMAIN'
-settings = domain.modifiers["Fluid"].domain_settings
+modifier = domain.modifiers.get("Fluid")
+if modifier is None:
+    modifier = domain.modifiers.new(name="Fluid", type="FLUID")
+
+modifier.fluid_type = 'DOMAIN'
+settings = modifier.domain_settings
 settings.domain_type = domain_type
 settings.resolution_max = resolution
 settings.cache_directory = cache_dir

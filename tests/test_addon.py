@@ -194,6 +194,19 @@ class TestServerExecution:
         assert response_holder["response"] == expected
         process.assert_called_once_with(request)
 
+    def test_python_execute_does_not_auto_push_undo(self, addon_module, mock_bpy):
+        server = addon_module.BlenderMCPServer()
+        request = {
+            "id": "2",
+            "command": "python.execute",
+            "params": {"code": "__result__ = 1"},
+        }
+
+        result = server._process_request(request)
+
+        assert result["success"] is True
+        mock_bpy.ops.ed.undo_push.assert_not_called()
+
 
 class TestPythonExecute:
     """Tests for the python.execute command handler."""

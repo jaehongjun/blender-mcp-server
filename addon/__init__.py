@@ -1004,7 +1004,6 @@ class BlenderMCPServer:
         "material.assign",
         "material.set_color",
         "material.set_texture",
-        "python.execute",
     }
 
     def _submit_request(self, request: dict) -> dict:

@@ -439,7 +439,7 @@ All output below was produced by a live Blender 4.0.2 instance controlled throug
 
 ## Safety Features
 
-- **Automatic undo push** — every mutation tool pushes an undo step first, so you can always roll back
+- **Automatic undo push** — object/material mutation tools push an undo step first; `python.execute` is excluded because multi-step physics scripts were unstable with per-request undo snapshots
 - **Safe Mode** — enable in add-on preferences to restrict file access to the project directory only
 - **Tool whitelist** — limit which commands the bridge will accept
 - **Script path restrictions** — `script_path` must be under configured approved roots
