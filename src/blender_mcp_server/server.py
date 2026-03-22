@@ -475,6 +475,15 @@ async def job_cancel(ctx: Context, job_id: str) -> str:
     return json.dumps(result, indent=2)
 
 
+@mcp.tool(
+    name="blender_job_list",
+    description="List known async Blender jobs with their IDs, statuses, and creation timestamps.",
+)
+async def job_list(ctx: Context) -> str:
+    result = await _get_conn(ctx).send_command("job.list")
+    return json.dumps(result, indent=2)
+
+
 def main():
     mcp.run(transport="stdio")
 

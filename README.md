@@ -2,7 +2,7 @@
 
 Control Blender from AI assistants like Claude Desktop using the [Model Context Protocol (MCP)](https://modelcontextprotocol.io).
 
-**26 tools** across 7 namespaces — create objects, assign materials, render images, export scenes, execute Python scripts, manage async jobs, and more, all through natural language.
+**27 tools** across 7 namespaces — create objects, assign materials, render images, export scenes, execute Python scripts, manage async jobs, and more, all through natural language.
 
 ![Demo render — scene built entirely through MCP tools](docs/images/demo_render.png)
 
@@ -431,10 +431,11 @@ All output below was produced by a live Blender 4.0.2 instance controlled throug
 
 | Tool | Description |
 |---|---|
-| `blender_python_exec` | Execute a Python script synchronously in Blender's context. Provide `code` or `script_path`, optional `args` and `timeout_seconds`. Returns result, stdout, stderr. |
+| `blender_python_exec` | Execute a Python script synchronously in Blender's context. Provide `code` or `script_path`, optional `args` and `timeout_seconds`. Returns result, stdout, stderr, and cooperative timeout/cancel metadata. |
 | `blender_python_exec_async` | Start a long-running script asynchronously. Returns a `job_id`. Use for baking, heavy generation. |
 | `blender_job_status` | Poll an async job's status, result, stdout, stderr, and error. |
 | `blender_job_cancel` | Cancel a running or queued async job. |
+| `blender_job_list` | List known async jobs with IDs, status, and creation time. |
 
 ## Safety Features
 
@@ -443,7 +444,7 @@ All output below was produced by a live Blender 4.0.2 instance controlled throug
 - **Tool whitelist** — limit which commands the bridge will accept
 - **Script path restrictions** — `script_path` must be under configured approved roots
 - **Inline code toggle** — disable inline code execution via add-on preferences
-- **Module blocklist** — `subprocess`, `shutil`, `webbrowser`, `ctypes`, `multiprocessing` are blocked by default during script execution
+- **Module blocklist** — `subprocess`, `shutil`, `socket`, `webbrowser`, `ctypes`, `multiprocessing` are blocked by default during script execution
 
 ## Add-on Preferences
 
@@ -502,7 +503,16 @@ blender-mcp-server/
 │   └── __init__.py          # Blender add-on — TCP server + command handlers + job manager
 ├── src/blender_mcp_server/
 │   ├── __init__.py
-│   └── server.py            # MCP server — stdio transport + 26 tool definitions
+│   └── server.py            # MCP server — stdio transport + 27 tool definitions
+├── scripts/
+│   ├── library/             # Reusable Blender scripts for common tasks
+│   │   ├── fluid_domain.py, fluid_inflow.py, effector.py, ...
+│   │   └── README.md
+│   ├── demos/               # End-to-end demo scenes
+│   │   ├── dam_break_scene.py   # Monolithic dam-break scene builder
+│   │   ├── run_dam_break.py     # Step-by-step bridge caller
+│   │   └── README.md            # Demo docs + follow-up tickets
+│   └── blender_bridge_request.py, ...  # Direct bridge test helpers
 ├── tests/
 │   ├── test_addon.py        # Add-on tests (mocked bpy)
 │   └── test_server.py       # MCP server tests
@@ -520,7 +530,7 @@ blender-mcp-server/
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes with tests
-4. Run `pytest tests/ -v` to verify all 73 tests pass
+4. Run `pytest tests/ -v` to verify all 83 tests pass
 5. Submit a pull request
 
 ## License

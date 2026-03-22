@@ -14,6 +14,7 @@ import io
 import os
 import queue
 import socket
+import sys
 import threading
 import traceback
 import logging
@@ -36,7 +37,14 @@ TOOL_WHITELIST: set[str] | None = None  # None = all tools allowed
 # Python execution settings (set via addon preferences)
 ALLOW_INLINE_CODE = True
 APPROVED_SCRIPT_ROOTS: list[str] = []
-BLOCKED_MODULES: set[str] = {"subprocess", "shutil", "webbrowser", "ctypes", "multiprocessing"}
+BLOCKED_MODULES: set[str] = {
+    "subprocess",
+    "shutil",
+    "socket",
+    "webbrowser",
+    "ctypes",
+    "multiprocessing",
+}
 DEFAULT_SYNC_TIMEOUT = 30
 DEFAULT_ASYNC_TIMEOUT = 300
 MAX_SYNC_TIMEOUT = 300
@@ -67,6 +75,58 @@ _last_execution: dict[str, Any] = {
     "duration_seconds": None,
     "error_summary": None,
 }
+
+
+class ScriptExecutionTimeout(TimeoutError):
+    """Raised when script execution exceeds the configured timeout."""
+
+
+class ScriptExecutionCancelled(RuntimeError):
+    """Raised when script execution is cancelled cooperatively."""
+
+
+def _get_addon_preferences():
+    """Return this add-on's preferences object when available."""
+    context = getattr(bpy, "context", None)
+    preferences = getattr(context, "preferences", None)
+    addons = getattr(preferences, "addons", None)
+    if addons is None:
+        return None
+
+    addon_entry = None
+    getter = getattr(addons, "get", None)
+    if callable(getter):
+        addon_entry = getter(__name__)
+    elif isinstance(addons, dict):
+        addon_entry = addons.get(__name__)
+
+    return getattr(addon_entry, "preferences", None)
+
+
+def _sync_runtime_settings():
+    """Apply add-on preferences to module-level runtime settings."""
+    global SAFE_MODE, PORT, ALLOW_INLINE_CODE, APPROVED_SCRIPT_ROOTS, ALLOWED_PATHS
+
+    prefs = _get_addon_preferences()
+    if prefs is None:
+        return
+
+    SAFE_MODE = bool(getattr(prefs, "safe_mode", SAFE_MODE))
+    PORT = int(getattr(prefs, "port", PORT))
+    ALLOW_INLINE_CODE = bool(getattr(prefs, "allow_inline_code", ALLOW_INLINE_CODE))
+
+    raw_roots = getattr(prefs, "approved_script_roots", "") or ""
+    path_helper = getattr(getattr(bpy, "path", None), "abspath", None)
+    approved_roots = []
+    for root in raw_roots.split(";"):
+        root = root.strip()
+        if not root:
+            continue
+        resolved = path_helper(root) if callable(path_helper) else root
+        approved_roots.append(os.path.realpath(resolved))
+
+    APPROVED_SCRIPT_ROOTS = approved_roots
+    ALLOWED_PATHS = approved_roots.copy() if SAFE_MODE else []
 
 
 class CommandHandler:
@@ -106,6 +166,7 @@ class CommandHandler:
         self._handlers["job.list"] = self._job_list
 
     def handle(self, command: str, params: dict) -> Any:
+        _sync_runtime_settings()
         # Security: check tool whitelist
         if TOOL_WHITELIST is not None and command not in TOOL_WHITELIST:
             raise PermissionError(f"Command '{command}' is not in the tool whitelist")
@@ -517,15 +578,34 @@ class CommandHandler:
         except (TypeError, ValueError):
             return repr(value)
 
-    def _run_code(self, code: str, namespace: dict, timeout_seconds: float,
-                  request_id: str | None = None) -> dict:
-        """Execute code with stdout/stderr capture and timeout."""
+    def _run_code(
+        self,
+        code: str,
+        namespace: dict,
+        timeout_seconds: float,
+        request_id: str | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> dict:
+        """Execute code with stdout/stderr capture and cooperative timeout checks."""
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()
         start = time.monotonic()
 
         hook = _BlockedImportHook(BLOCKED_MODULES)
         hook.install()
+        previous_trace = sys.gettrace()
+
+        def trace_calls(frame, event, arg):
+            if event == "line":
+                if cancel_event is not None and cancel_event.is_set():
+                    raise ScriptExecutionCancelled("Execution cancelled")
+                if timeout_seconds > 0 and (time.monotonic() - start) > timeout_seconds:
+                    raise ScriptExecutionTimeout(
+                        f"Execution exceeded timeout of {timeout_seconds:.3f}s"
+                    )
+            return trace_calls
+
+        sys.settrace(trace_calls)
         try:
             with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
                 exec(compile(code, "<mcp-script>", "exec"), namespace)
@@ -545,8 +625,11 @@ class CommandHandler:
                 "stderr": _cap_output(stderr_buf.getvalue()),
                 "error": error_str,
                 "duration_seconds": round(elapsed, 4),
+                "timed_out": isinstance(exc, ScriptExecutionTimeout),
+                "cancelled": isinstance(exc, ScriptExecutionCancelled),
             }
         finally:
+            sys.settrace(previous_trace)
             hook.uninstall()
 
         elapsed = time.monotonic() - start
@@ -560,6 +643,8 @@ class CommandHandler:
             "stderr": _cap_output(stderr_buf.getvalue()),
             "error": None,
             "duration_seconds": round(elapsed, 4),
+            "timed_out": False,
+            "cancelled": False,
         }
 
     def _python_execute(self, params: dict) -> dict:
@@ -593,7 +678,9 @@ class CommandHandler:
         logger.info("python.execute [%s] starting: %s", request_id, source_label)
 
         namespace = self._make_namespace(args)
-        result = self._run_code(code, namespace, timeout_seconds, request_id)
+        result = self._run_code(
+            code, namespace, timeout_seconds, request_id, cancel_event=None
+        )
 
         _last_execution = {
             "request_id": request_id,
@@ -700,6 +787,7 @@ class JobManager:
         job = {
             "job_id": job_id,
             "status": "queued",
+            "cancellation_requested": False,
             "created_at": now,
             "started_at": None,
             "completed_at": None,
@@ -743,14 +831,23 @@ class JobManager:
 
         handler = job["handler"]
         namespace = handler._make_namespace(job["args"], cancel_event)
-        result = handler._run_code(job["code"], namespace, job["timeout_seconds"], job_id)
+        result = handler._run_code(
+            job["code"],
+            namespace,
+            job["timeout_seconds"],
+            job_id,
+            cancel_event=cancel_event,
+        )
 
         with self._lock:
             job["result"] = result.get("result")
             job["stdout"] = result.get("stdout", "")
             job["stderr"] = result.get("stderr", "")
             job["error"] = result.get("error")
-            job["status"] = "failed" if result.get("error") else "succeeded"
+            if result.get("cancelled") or cancel_event.is_set():
+                job["status"] = "cancelled"
+            else:
+                job["status"] = "failed" if result.get("error") else "succeeded"
             job["completed_at"] = time.time()
 
         elapsed = (job["completed_at"] - job["started_at"]) if job["started_at"] else 0
@@ -772,6 +869,7 @@ class JobManager:
         return {
             "job_id": job["job_id"],
             "status": job["status"],
+            "cancellation_requested": job["cancellation_requested"],
             "created_at": job["created_at"],
             "started_at": job["started_at"],
             "completed_at": job["completed_at"],
@@ -784,17 +882,24 @@ class JobManager:
     def cancel(self, job_id: str) -> dict:
         with self._lock:
             job = self._jobs.get(job_id)
-        if not job:
-            raise ValueError(f"Unknown job: {job_id}")
+            if not job:
+                raise ValueError(f"Unknown job: {job_id}")
 
-        job["cancel_event"].set()
+            job["cancel_event"].set()
+            job["cancellation_requested"] = True
 
-        with self._lock:
-            if job["status"] in ("queued", "running"):
+            if job["status"] == "queued":
                 job["status"] = "cancelled"
                 job["completed_at"] = time.time()
 
-        return {"job_id": job_id, "status": job["status"]}
+            status = job["status"]
+            cancellation_requested = job["cancellation_requested"]
+
+        return {
+            "job_id": job_id,
+            "status": status,
+            "cancellation_requested": cancellation_requested,
+        }
 
     def list_jobs(self) -> dict:
         with self._lock:
@@ -820,22 +925,27 @@ class BlenderMCPServer:
         self._server_socket: socket.socket | None = None
         self._thread: threading.Thread | None = None
         self._running = False
+        self._host = HOST
+        self._port = PORT
         self._handler = CommandHandler()
         self._request_queue: queue.Queue[dict[str, Any]] = queue.Queue()
 
     def start(self):
         if self._running:
             return
+        _sync_runtime_settings()
         self._running = True
+        self._host = HOST
+        self._port = PORT
         self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._server_socket.settimeout(1.0)
-        self._server_socket.bind((HOST, PORT))
+        self._server_socket.bind((self._host, self._port))
         self._server_socket.listen(1)
         self._thread = threading.Thread(target=self._accept_loop, daemon=True)
         self._thread.start()
         bpy.app.timers.register(self._drain_request_queue, first_interval=0.01)
-        logger.info(f"Blender MCP Bridge listening on {HOST}:{PORT}")
+        logger.info(f"Blender MCP Bridge listening on {self._host}:{self._port}")
 
     def stop(self):
         self._running = False
@@ -1004,7 +1114,7 @@ class MCP_PT_Panel(bpy.types.Panel):
         layout = self.layout
         global _server
         if _server and _server._running:
-            layout.label(text=f"● Listening on {HOST}:{PORT}", icon="LINKED")
+            layout.label(text=f"● Listening on {_server._host}:{_server._port}", icon="LINKED")
             layout.operator("mcp.stop_server", text="Stop Server")
         else:
             layout.label(text="○ Server stopped", icon="UNLINKED")
@@ -1034,7 +1144,7 @@ class MCP_OT_StartServer(bpy.types.Operator):
         if _server is None:
             _server = BlenderMCPServer()
         _server.start()
-        self.report({"INFO"}, f"MCP Bridge started on {HOST}:{PORT}")
+        self.report({"INFO"}, f"MCP Bridge started on {_server._host}:{_server._port}")
         return {"FINISHED"}
 
 
@@ -1057,6 +1167,7 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     # Auto-start the server
+    _sync_runtime_settings()
     global _server
     _server = BlenderMCPServer()
     _server.start()

@@ -33,7 +33,7 @@ result.
 | `code` | string | one of `code`/`script_path` | — | Inline Python source to execute |
 | `script_path` | string | one of `code`/`script_path` | — | Absolute path to a `.py` file |
 | `args` | object | no | `{}` | Key/value pairs injected into the execution namespace as `args` |
-| `timeout_seconds` | number | no | `30` | Maximum execution time before the script is interrupted |
+| `timeout_seconds` | number | no | `30` | Maximum cooperative execution time before the script is interrupted |
 
 If both `code` and `script_path` are provided, the request is rejected. If
 neither is provided, the request is rejected.
@@ -173,8 +173,9 @@ Same schema as `python.execute`, plus:
 ```
 
 Cancellation sets a flag that scripts can check via `__cancel_event__.is_set()`.
-If the script does not check the flag, the job will continue until its timeout
-expires.
+The bridge also performs cooperative cancellation and timeout checks between
+Python line executions. Long-running native Blender operators may still finish
+their current call before the cancellation is observed.
 
 ---
 

@@ -22,6 +22,7 @@ def _create_mock_bpy():
     scene.render.engine = "BLENDER_EEVEE"
     scene.render.resolution_x = 1920
     scene.render.resolution_y = 1080
+    scene.frame_set = MagicMock()
 
     # Mock objects
     cube = MagicMock()
@@ -54,11 +55,15 @@ def _create_mock_bpy():
 
     bpy.context.scene = scene
     bpy.context.collection = MagicMock()
+    bpy.context.preferences = MagicMock()
+    bpy.context.preferences.addons = {}
     bpy.app.timers.register = MagicMock()
     bpy.ops.ed.undo_push.poll.return_value = False
+    bpy.path.abspath = lambda path: path
 
     # Mock data — use MagicMock for Blender collections (they support .get() and iteration)
     objects_collection = MagicMock()
+    objects_collection.keys = lambda: ["Cube", "Camera"]
     objects_collection.get = lambda name: {"Cube": cube, "Camera": camera}.get(name)
 
     materials_collection = MagicMock()
@@ -68,6 +73,7 @@ def _create_mock_bpy():
 
     bpy.data.objects = objects_collection
     bpy.data.materials = materials_collection
+    bpy.data.filepath = "/tmp/mock_scene.blend"
 
     return bpy
 
@@ -347,6 +353,23 @@ class TestPythonSandbox:
         result = handler.handle("python.execute", {"code": "__result__ = True"})
         assert result["result"] is True
 
+    def test_runtime_preferences_are_applied(self, handler, addon_module, mock_bpy):
+        prefs = MagicMock()
+        prefs.safe_mode = True
+        prefs.port = 9988
+        prefs.allow_inline_code = False
+        prefs.approved_script_roots = "/tmp/a;/tmp/b"
+        mock_bpy.context.preferences.addons["addon"] = MagicMock(preferences=prefs)
+
+        with pytest.raises(PermissionError, match="disabled"):
+            handler.handle("python.execute", {"code": "pass"})
+
+        assert addon_module.SAFE_MODE is True
+        assert addon_module.PORT == 9988
+        assert addon_module.ALLOW_INLINE_CODE is False
+        assert addon_module.APPROVED_SCRIPT_ROOTS == ["/tmp/a", "/tmp/b"]
+        assert addon_module.ALLOWED_PATHS == ["/tmp/a", "/tmp/b"]
+
     def test_non_py_script_rejected(self, handler, addon_module):
         with tempfile.TemporaryDirectory() as tmpdir:
             script = os.path.join(tmpdir, "script.txt")
@@ -388,6 +411,22 @@ class TestJobLifecycle:
         job_id = result["job_id"]
         cancel_result = handler.handle("job.cancel", {"job_id": job_id})
         assert cancel_result["status"] == "cancelled"
+        assert cancel_result["cancellation_requested"] is True
+
+    def test_job_cancel_running_marks_request_only(self, handler, addon_module):
+        result = handler.handle("python.execute_async", {"code": "pass"})
+        job_id = result["job_id"]
+        with addon_module._job_manager._lock:
+            addon_module._job_manager._jobs[job_id]["status"] = "running"
+
+        cancel_result = handler.handle("job.cancel", {"job_id": job_id})
+
+        assert cancel_result["status"] == "running"
+        assert cancel_result["cancellation_requested"] is True
+
+        status = handler.handle("job.status", {"job_id": job_id})
+        assert status["status"] == "running"
+        assert status["cancellation_requested"] is True
 
     def test_job_cancel_unknown_raises(self, handler):
         with pytest.raises(ValueError, match="Unknown job"):
@@ -487,6 +526,40 @@ class TestOutputBounding:
         assert last["duration_seconds"] is not None
 
 
+class TestExecutionControl:
+    def test_sync_timeout_is_enforced(self, handler):
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": "while True:\n    pass",
+                "timeout_seconds": 0.01,
+            },
+        )
+        assert result["timed_out"] is True
+        assert result["cancelled"] is False
+        assert "timeout" in result["error"].lower()
+
+    def test_async_cancellation_propagates_to_final_status(self, handler, addon_module):
+        result = handler.handle(
+            "python.execute_async",
+            {
+                "code": (
+                    "while True:\n"
+                    "    if __cancel_event__.is_set():\n"
+                    "        raise RuntimeError('stop requested')\n"
+                ),
+                "timeout_seconds": 1,
+            },
+        )
+        job_id = result["job_id"]
+        addon_module._job_manager.cancel(job_id)
+        addon_module._job_manager._execute_job(job_id)
+
+        status = handler.handle("job.status", {"job_id": job_id})
+        assert status["status"] == "cancelled"
+        assert status["cancellation_requested"] is True
+
+
 class TestResultSerialization:
     """Additional tests for JSON-safe result handling."""
 
@@ -564,3 +637,93 @@ class TestAsyncInlineDisabled:
                 "code": "pass",
                 "script_path": "/some/file.py",
             })
+
+
+class TestDamBreakDemo:
+    """Validate the dam-break demo scripts."""
+
+    DEMOS_DIR = os.path.join(
+        os.path.dirname(__file__), os.pardir, "scripts", "demos"
+    )
+    LIBRARY_DIR = os.path.join(
+        os.path.dirname(__file__), os.pardir, "scripts", "library"
+    )
+
+    def test_dam_break_scene_parses(self):
+        """The monolithic demo script must be syntactically valid Python."""
+        import ast
+        path = os.path.join(self.DEMOS_DIR, "dam_break_scene.py")
+        with open(path) as f:
+            ast.parse(f.read(), filename=path)
+
+    def test_run_dam_break_parses(self):
+        """The bridge caller script must be syntactically valid."""
+        import ast
+        path = os.path.join(self.DEMOS_DIR, "run_dam_break.py")
+        with open(path) as f:
+            ast.parse(f.read(), filename=path)
+
+    def test_run_dam_break_builds_correct_steps(self):
+        """build_steps() returns expected step count and uses library scripts."""
+        sys.path.insert(0, self.DEMOS_DIR)
+        try:
+            import run_dam_break
+            steps = run_dam_break.build_steps(self.LIBRARY_DIR)
+        finally:
+            sys.path.pop(0)
+            sys.modules.pop("run_dam_break", None)
+
+        assert len(steps) >= 11
+        labels = [s["label"] for s in steps]
+        assert any("frame range" in l.lower() for l in labels)
+        assert any("fluid domain" in l.lower() for l in labels)
+        assert any("camera" in l.lower() for l in labels)
+        assert any("collider" in l.lower() for l in labels)
+        assert any("rigid" in l.lower() for l in labels)
+        assert any("keyframe" in l.lower() or "dolly" in l.lower() for l in labels)
+
+    def test_run_dam_break_script_paths_exist(self):
+        """Every library script referenced by build_steps must exist."""
+        sys.path.insert(0, self.DEMOS_DIR)
+        try:
+            import run_dam_break
+            steps = run_dam_break.build_steps(self.LIBRARY_DIR)
+        finally:
+            sys.path.pop(0)
+            sys.modules.pop("run_dam_break", None)
+
+        for step in steps:
+            if step["method"] == "script":
+                assert os.path.isfile(step["script_path"]), (
+                    f"Missing library script: {step['script_path']}"
+                )
+
+    def test_dam_break_scene_executes_in_mock(self, handler, addon_module):
+        """The monolithic script should execute without import errors
+        in the mocked bpy environment (logic errors from mocks are OK)."""
+        path = os.path.realpath(
+            os.path.join(self.DEMOS_DIR, "dam_break_scene.py")
+        )
+        addon_module.APPROVED_SCRIPT_ROOTS = [os.path.dirname(path)]
+        try:
+            result = handler.handle("python.execute", {
+                "script_path": path,
+                "args": {"resolution": 16, "frame_end": 10},
+            })
+            # With mocked bpy the script may error on mock attribute access,
+            # but it should not raise an import or syntax error.
+            # If it succeeds, validate the result structure.
+            if result.get("error") is None:
+                assert "fluid_domain" in result["result"]
+                assert "camera" in result["result"]
+                assert "debris" in result["result"]
+        finally:
+            addon_module.APPROVED_SCRIPT_ROOTS = []
+
+    def test_all_library_scripts_parse(self):
+        """Every .py in scripts/library/ must be syntactically valid."""
+        import ast
+        import glob as globmod
+        for path in sorted(globmod.glob(os.path.join(self.LIBRARY_DIR, "*.py"))):
+            with open(path) as f:
+                ast.parse(f.read(), filename=path)

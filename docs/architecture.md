@@ -166,7 +166,7 @@ Script execution runs with a pragmatic local trust model:
    off, only file-based execution is allowed.
 3. **Module blocklist** — A lightweight import hook blocks `subprocess`,
    `shutil`, `socket`, `ctypes`, and other dangerous modules during execution.
-4. **Timeout** — Per-request timeout (default 30s sync, 300s async).
+4. **Timeout** — Per-request cooperative timeout (default 30s sync, 300s async).
 5. **Output bounding** — stdout/stderr are capped at 50 KB to prevent
    memory exhaustion.
 
