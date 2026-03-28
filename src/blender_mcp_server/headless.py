@@ -41,7 +41,7 @@ def _extract_payload(stdout: str) -> tuple[dict[str, Any] | None, str]:
     clean_lines: list[str] = []
     for line in stdout.splitlines():
         if line.startswith(RESULT_PREFIX):
-            payload = json.loads(line[len(RESULT_PREFIX):])
+            payload = json.loads(line[len(RESULT_PREFIX) :])
         else:
             clean_lines.append(line)
     cleaned = "\n".join(clean_lines)
@@ -158,7 +158,11 @@ class HeadlessBlenderExecutor:
             try:
                 stdout_b, stderr_b = await asyncio.wait_for(
                     proc.communicate(),
-                    timeout=timeout_seconds if timeout_seconds and timeout_seconds > 0 else None,
+                    timeout=(
+                        timeout_seconds
+                        if timeout_seconds and timeout_seconds > 0
+                        else None
+                    ),
                 )
             except asyncio.TimeoutError:
                 proc.kill()
@@ -193,9 +197,7 @@ class HeadlessBlenderExecutor:
         payload, clean_stdout = _extract_payload(stdout)
 
         if payload is None:
-            error = (
-                f"Headless Blender exited with code {proc.returncode} without a result payload"
-            )
+            error = f"Headless Blender exited with code {proc.returncode} without a result payload"
             if stderr.strip():
                 error = f"{error}\n{stderr.strip()}"
             return {
