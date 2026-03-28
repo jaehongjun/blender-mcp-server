@@ -25,6 +25,7 @@ import time
 import uuid
 from contextlib import redirect_stdout, redirect_stderr
 from typing import Any
+from bpy.app.handlers import persistent
 
 logger = logging.getLogger(__name__)
 
@@ -1227,6 +1228,37 @@ class BlenderMCPServer:
 _server: BlenderMCPServer | None = None
 
 
+def _server_healthy() -> bool:
+    global _server
+    return bool(
+        _server
+        and _server._running
+        and _server._server_socket is not None
+        and _server._thread is not None
+        and _server._thread.is_alive()
+    )
+
+
+def _ensure_server_running():
+    global _server
+    if _server_healthy():
+        return None
+    if _server:
+        try:
+            _server.stop()
+        except Exception:
+            logger.exception("Failed stopping stale MCP Bridge during restart")
+    _sync_runtime_settings()
+    _server = BlenderMCPServer()
+    _server.start()
+    return None
+
+
+@persistent
+def _on_load_post(_dummy):
+    bpy.app.timers.register(_ensure_server_running, first_interval=0.1)
+
+
 class MCP_AddonPreferences(bpy.types.AddonPreferences):
     bl_idname = __name__
 
@@ -1326,15 +1358,15 @@ classes = (MCP_AddonPreferences, MCP_PT_Panel, MCP_OT_StartServer, MCP_OT_StopSe
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
-    # Auto-start the server
-    _sync_runtime_settings()
-    global _server
-    _server = BlenderMCPServer()
-    _server.start()
+    if _on_load_post not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_on_load_post)
+    _ensure_server_running()
 
 
 def unregister():
     global _server
+    if _on_load_post in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_on_load_post)
     if _server:
         _server.stop()
         _server = None
