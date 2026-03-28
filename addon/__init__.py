@@ -25,6 +25,7 @@ import time
 import uuid
 from contextlib import redirect_stdout, redirect_stderr
 from typing import Any
+from bpy.app.handlers import persistent
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,9 @@ def _cap_output(text: str) -> str:
     return text[:MAX_OUTPUT_SIZE] + f"\n… (truncated, {len(text)} total chars)"
 
 
-def _build_cube_pydata(size: float) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
+def _build_cube_pydata(
+    size: float,
+) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
     half = size / 2.0
     verts = [
         (-half, -half, -half),
@@ -92,7 +95,9 @@ def _build_cube_pydata(size: float) -> tuple[list[tuple[float, float, float]], l
     return verts, faces
 
 
-def _build_plane_pydata(size: float) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
+def _build_plane_pydata(
+    size: float,
+) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
     half = size / 2.0
     verts = [
         (-half, -half, 0.0),
@@ -270,9 +275,7 @@ def _make_exec_builtins(blocked_modules: set[str]) -> dict[str, Any]:
     def guarded_import(name, *a, **kw):
         top_level = name.split(".")[0]
         if top_level in blocked_modules:
-            raise ImportError(
-                f"Import of '{name}' is blocked by MCP safety policy"
-            )
+            raise ImportError(f"Import of '{name}' is blocked by MCP safety policy")
         return original_import(name, *a, **kw)
 
     exec_builtins["__import__"] = guarded_import
@@ -726,7 +729,9 @@ class CommandHandler:
             roots = [blend_dir]
 
         for root in roots:
-            if real_path.startswith(os.path.realpath(root) + os.sep) or real_path == os.path.realpath(root):
+            if real_path.startswith(
+                os.path.realpath(root) + os.sep
+            ) or real_path == os.path.realpath(root):
                 return real_path
         raise PermissionError(
             f"Script path denied: '{script_path}' is outside approved roots. "
@@ -734,9 +739,12 @@ class CommandHandler:
         )
 
     @staticmethod
-    def _make_namespace(args: dict, cancel_event: threading.Event | None = None) -> dict:
+    def _make_namespace(
+        args: dict, cancel_event: threading.Event | None = None
+    ) -> dict:
         """Build the execution namespace for exec()."""
         import mathutils
+
         ns: dict[str, Any] = {
             "bpy": bpy,
             "math": math,
@@ -797,7 +805,9 @@ class CommandHandler:
             error_str = "".join(filtered).strip()
             logger.warning(
                 "Script execution failed [%s] after %.3fs: %s",
-                request_id or "?", elapsed, _truncate(str(exc), 200),
+                request_id or "?",
+                elapsed,
+                _truncate(str(exc), 200),
             )
             return {
                 "result": None,
@@ -814,7 +824,8 @@ class CommandHandler:
         elapsed = time.monotonic() - start
         logger.info(
             "Script execution succeeded [%s] in %.3fs",
-            request_id or "?", elapsed,
+            request_id or "?",
+            elapsed,
         )
         return {
             "result": self._safe_json(namespace.get("__result__")),
@@ -866,7 +877,9 @@ class CommandHandler:
             "source": source_label,
             "status": "error" if result.get("error") else "ok",
             "duration_seconds": result.get("duration_seconds"),
-            "error_summary": _truncate(result["error"], 200) if result.get("error") else None,
+            "error_summary": (
+                _truncate(result["error"], 200) if result.get("error") else None
+            ),
         }
         return result
 
@@ -914,6 +927,7 @@ class CommandHandler:
     def _job_list(self, params: dict) -> dict:
         return _job_manager.list_jobs()
 
+
 class JobManager:
     """Manages async job lifecycle for long-running Blender scripts."""
 
@@ -953,9 +967,7 @@ class JobManager:
         with self._lock:
             self._jobs[job_id] = job
 
-        bpy.app.timers.register(
-            lambda: self._execute_job(job_id), first_interval=0.01
-        )
+        bpy.app.timers.register(lambda: self._execute_job(job_id), first_interval=0.01)
         return job_id
 
     def _execute_job(self, job_id: str) -> None:
@@ -1227,6 +1239,37 @@ class BlenderMCPServer:
 _server: BlenderMCPServer | None = None
 
 
+def _server_healthy() -> bool:
+    global _server
+    return bool(
+        _server
+        and _server._running
+        and _server._server_socket is not None
+        and _server._thread is not None
+        and _server._thread.is_alive()
+    )
+
+
+def _ensure_server_running():
+    global _server
+    if _server_healthy():
+        return None
+    if _server:
+        try:
+            _server.stop()
+        except Exception:
+            logger.exception("Failed stopping stale MCP Bridge during restart")
+    _sync_runtime_settings()
+    _server = BlenderMCPServer()
+    _server.start()
+    return None
+
+
+@persistent
+def _on_load_post(_dummy):
+    bpy.app.timers.register(_ensure_server_running, first_interval=0.1)
+
+
 class MCP_AddonPreferences(bpy.types.AddonPreferences):
     bl_idname = __name__
 
@@ -1274,7 +1317,9 @@ class MCP_PT_Panel(bpy.types.Panel):
         layout = self.layout
         global _server
         if _server and _server._running:
-            layout.label(text=f"● Listening on {_server._host}:{_server._port}", icon="LINKED")
+            layout.label(
+                text=f"● Listening on {_server._host}:{_server._port}", icon="LINKED"
+            )
             layout.operator("mcp.stop_server", text="Stop Server")
         else:
             layout.label(text="○ Server stopped", icon="UNLINKED")
@@ -1292,7 +1337,9 @@ class MCP_PT_Panel(bpy.types.Panel):
             if _last_execution["duration_seconds"] is not None:
                 box.label(text=f"Duration: {_last_execution['duration_seconds']:.3f}s")
             if _last_execution["error_summary"]:
-                box.label(text=f"Error: {_last_execution['error_summary']}", icon="ERROR")
+                box.label(
+                    text=f"Error: {_last_execution['error_summary']}", icon="ERROR"
+                )
 
 
 class MCP_OT_StartServer(bpy.types.Operator):
@@ -1326,15 +1373,15 @@ classes = (MCP_AddonPreferences, MCP_PT_Panel, MCP_OT_StartServer, MCP_OT_StopSe
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
-    # Auto-start the server
-    _sync_runtime_settings()
-    global _server
-    _server = BlenderMCPServer()
-    _server.start()
+    if _on_load_post not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_on_load_post)
+    _ensure_server_running()
 
 
 def unregister():
     global _server
+    if _on_load_post in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_on_load_post)
     if _server:
         _server.stop()
         _server = None
