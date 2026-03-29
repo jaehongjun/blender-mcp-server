@@ -23,7 +23,6 @@ import math
 import bpy
 from mathutils import Euler, Vector
 
-
 FRAME_END = int(args.get("frame_end", 96))
 FPS = int(args.get("fps", 24))
 RES_X = int(args.get("resolution_x", 1280))
@@ -266,7 +265,9 @@ gasket = create_pipe("Gasket", (-0.03, pipe_y, pipe_z), (0.03, pipe_y, pipe_z), 
 rupture_stub = create_pipe("RuptureStub", (0.90, pipe_y, pipe_z), (1.18, pipe_y, pipe_z), 0.17, pipes_coll, mat_pipe)
 
 for i, x in enumerate((-0.46, -0.30, -0.14, 0.02, 0.18, 0.34, 0.50)):
-    ring = create_pipe(f"Bellows_{i:02d}", (x - 0.025, pipe_y, pipe_z), (x + 0.025, pipe_y, pipe_z), 0.19, pipes_coll, mat_joint)
+    ring = create_pipe(
+        f"Bellows_{i:02d}", (x - 0.025, pipe_y, pipe_z), (x + 0.025, pipe_y, pipe_z), 0.19, pipes_coll, mat_joint
+    )
     parent_keep_transform(ring, joint_rig)
 
 for i, a in enumerate((0.0, 1.1, 2.2, 3.14, 4.24, 5.34)):
@@ -280,17 +281,30 @@ gauge_body = create_pipe("GaugeBody", (0.0, -2.10, 2.02), (0.0, -1.84, 2.02), 0.
 gauge_rim = create_pipe("GaugeRim", (0.0, -1.84, 2.02), (0.0, -1.78, 2.02), 0.17, pipes_coll, mat_dark)
 gauge_needle = create_box("GaugeNeedle", (0.02, 0.02, 0.24), (0.0, -1.73, 1.98), pipes_coll, mat_joint)
 
-valve_stem = create_pipe("ValveStem", (0.88, pipe_y, pipe_z + 0.15), (0.88, pipe_y, 1.92), 0.020, pipes_coll, mat_support)
+valve_stem = create_pipe(
+    "ValveStem", (0.88, pipe_y, pipe_z + 0.15), (0.88, pipe_y, 1.92), 0.020, pipes_coll, mat_support
+)
 valve_hub = create_pipe("ValveHub", (0.88, -2.16, 1.92), (0.88, -2.02, 1.92), 0.05, pipes_coll, mat_dark)
-valve_wheel = create_torus("ValveWheel", (0.88, -1.92, 1.92), (math.pi / 2.0, 0.0, 0.0), (0.18, 0.18, 0.18), pipes_coll, mat_joint)
+valve_wheel = create_torus(
+    "ValveWheel", (0.88, -1.92, 1.92), (math.pi / 2.0, 0.0, 0.0), (0.18, 0.18, 0.18), pipes_coll, mat_joint
+)
 
 for i, angle in enumerate((0.0, math.pi / 3.0, 2.0 * math.pi / 3.0)):
     d = Vector((math.cos(angle), 0.0, math.sin(angle)))
-    spoke = create_pipe(f"ValveSpoke_{i:02d}", Vector((0.88, -1.92, 1.92)) - d * 0.10, Vector((0.88, -1.92, 1.92)) + d * 0.10, 0.012, pipes_coll, mat_dark)
+    spoke = create_pipe(
+        f"ValveSpoke_{i:02d}",
+        Vector((0.88, -1.92, 1.92)) - d * 0.10,
+        Vector((0.88, -1.92, 1.92)) + d * 0.10,
+        0.012,
+        pipes_coll,
+        mat_dark,
+    )
     parent_keep_transform(spoke, valve_wheel)
 
 branch_up = create_pipe("BranchUp", (-1.7, pipe_y, pipe_z), (-1.7, pipe_y, 2.85), 0.08, pipes_coll, mat_pipe)
-branch_up_cap = create_torus("BranchUpValve", (-1.7, -1.95, 2.86), (math.pi / 2.0, 0.0, 0.0), (0.12, 0.12, 0.12), pipes_coll, mat_joint)
+branch_up_cap = create_torus(
+    "BranchUpValve", (-1.7, -1.95, 2.86), (math.pi / 2.0, 0.0, 0.0), (0.12, 0.12, 0.12), pipes_coll, mat_joint
+)
 branch_down = create_pipe("BranchDown", (2.0, pipe_y, pipe_z), (2.0, pipe_y, 0.62), 0.08, pipes_coll, mat_pipe)
 
 
@@ -311,7 +325,18 @@ support_group("SupportFarRight", 2.9)
 
 for obj in (main_left, main_right, branch_up, branch_up_cap, branch_down):
     parent_keep_transform(obj, main_rig)
-for obj in (flange_left, flange_right, joint_core, gasket, gauge_stem, gauge_body, gauge_rim, valve_stem, valve_hub, valve_wheel):
+for obj in (
+    flange_left,
+    flange_right,
+    joint_core,
+    gasket,
+    gauge_stem,
+    gauge_body,
+    gauge_rim,
+    valve_stem,
+    valve_hub,
+    valve_wheel,
+):
     parent_keep_transform(obj, joint_rig)
 parent_keep_transform(gauge_needle, gauge_body)
 parent_keep_transform(joint_rig, main_rig)
@@ -378,40 +403,55 @@ for frame in range(1, FRAME_END + 1):
     main_amp = 0.0025 * idle + 0.010 * build + 0.026 * critical + 0.040 * danger
     joint_amp = 0.0040 * idle + 0.015 * build + 0.032 * critical + 0.055 * danger
 
-    main_rig.location = main_rest + Vector((
-        0.0,
-        main_amp * math.sin(base_phase),
-        0.002 * math.sin(base_phase + 0.8),
-    ))
-    main_rig.rotation_euler = Euler((
-        0.0,
-        math.radians(0.20 + 0.40 * build) * math.sin(base_phase + 0.5),
-        math.radians(0.35 + 0.9 * critical + 1.4 * danger) * math.sin(base_phase + 0.2),
-    ), "XYZ")
+    main_rig.location = main_rest + Vector(
+        (
+            0.0,
+            main_amp * math.sin(base_phase),
+            0.002 * math.sin(base_phase + 0.8),
+        )
+    )
+    main_rig.rotation_euler = Euler(
+        (
+            0.0,
+            math.radians(0.20 + 0.40 * build) * math.sin(base_phase + 0.5),
+            math.radians(0.35 + 0.9 * critical + 1.4 * danger) * math.sin(base_phase + 0.2),
+        ),
+        "XYZ",
+    )
     key_loc_rot(main_rig, frame)
 
-    joint_rig.location = joint_rest + Vector((
-        0.0,
-        joint_amp * math.sin(base_phase + 0.9),
-        0.004 * critical * math.sin(fast_phase + 0.4),
-    ))
-    joint_rig.rotation_euler = Euler((
-        math.radians(0.4 + 1.8 * critical + 3.0 * danger) * math.sin(fast_phase + 0.3),
-        math.radians(0.5 + 1.4 * critical + 2.2 * danger) * math.sin(base_phase + 1.0),
-        math.radians(0.7 + 2.6 * critical + 4.2 * danger) * math.sin(fast_phase + 1.1),
-    ), "XYZ")
+    joint_rig.location = joint_rest + Vector(
+        (
+            0.0,
+            joint_amp * math.sin(base_phase + 0.9),
+            0.004 * critical * math.sin(fast_phase + 0.4),
+        )
+    )
+    joint_rig.rotation_euler = Euler(
+        (
+            math.radians(0.4 + 1.8 * critical + 3.0 * danger) * math.sin(fast_phase + 0.3),
+            math.radians(0.5 + 1.4 * critical + 2.2 * danger) * math.sin(base_phase + 1.0),
+            math.radians(0.7 + 2.6 * critical + 4.2 * danger) * math.sin(fast_phase + 1.1),
+        ),
+        "XYZ",
+    )
     key_loc_rot(joint_rig, frame)
 
-    weak_stub_rig.location = stub_rest + Vector((
-        0.010 * critical + 0.028 * danger,
-        0.018 * critical * math.sin(fast_phase + 0.8) + 0.034 * danger * math.sin(fast_phase + 1.1),
-        0.010 * danger * math.sin(base_phase + 0.6),
-    ))
-    weak_stub_rig.rotation_euler = Euler((
-        math.radians(0.8 + 2.8 * critical + 6.0 * danger) * math.sin(fast_phase + 0.9),
-        math.radians(0.6 + 2.0 * danger) * math.sin(base_phase + 0.7),
-        math.radians(1.2 + 4.0 * critical + 8.0 * danger) * math.sin(fast_phase + 1.6),
-    ), "XYZ")
+    weak_stub_rig.location = stub_rest + Vector(
+        (
+            0.010 * critical + 0.028 * danger,
+            0.018 * critical * math.sin(fast_phase + 0.8) + 0.034 * danger * math.sin(fast_phase + 1.1),
+            0.010 * danger * math.sin(base_phase + 0.6),
+        )
+    )
+    weak_stub_rig.rotation_euler = Euler(
+        (
+            math.radians(0.8 + 2.8 * critical + 6.0 * danger) * math.sin(fast_phase + 0.9),
+            math.radians(0.6 + 2.0 * danger) * math.sin(base_phase + 0.7),
+            math.radians(1.2 + 4.0 * critical + 8.0 * danger) * math.sin(fast_phase + 1.6),
+        ),
+        "XYZ",
+    )
     key_loc_rot(weak_stub_rig, frame)
 
     flange_sep = 0.002 * build + 0.010 * critical + 0.022 * danger
@@ -424,18 +464,24 @@ for frame in range(1, FRAME_END + 1):
     )
     joint_core.keyframe_insert(data_path="scale", frame=frame)
 
-    support_left_rig.rotation_euler = Euler((
-        0.0,
-        0.0,
-        support_left_rot_rest.z + math.radians(0.2 + 0.5 * critical) * math.sin(base_phase + 1.5),
-    ), "XYZ")
+    support_left_rig.rotation_euler = Euler(
+        (
+            0.0,
+            0.0,
+            support_left_rot_rest.z + math.radians(0.2 + 0.5 * critical) * math.sin(base_phase + 1.5),
+        ),
+        "XYZ",
+    )
     key_loc_rot(support_left_rig, frame)
 
-    support_right_rig.rotation_euler = Euler((
-        math.radians(0.3 + 1.6 * danger) * math.sin(fast_phase + 0.3),
-        0.0,
-        support_right_rot_rest.z + math.radians(0.3 + 1.2 * critical + 3.0 * danger) * math.sin(base_phase + 1.1),
-    ), "XYZ")
+    support_right_rig.rotation_euler = Euler(
+        (
+            math.radians(0.3 + 1.6 * danger) * math.sin(fast_phase + 0.3),
+            0.0,
+            support_right_rot_rest.z + math.radians(0.3 + 1.2 * critical + 3.0 * danger) * math.sin(base_phase + 1.1),
+        ),
+        "XYZ",
+    )
     key_loc_rot(support_right_rig, frame)
 
     gauge_needle.rotation_euler.y = (
@@ -447,11 +493,14 @@ for frame in range(1, FRAME_END + 1):
     )
     gauge_needle.keyframe_insert(data_path="rotation_euler", frame=frame)
 
-    valve_wheel.rotation_euler = Euler((
-        wheel_rot_rest.x,
-        wheel_rot_rest.y + math.radians(1.0 + 5.0 * critical + 8.0 * danger) * math.sin(fast_phase + 0.5),
-        wheel_rot_rest.z,
-    ), "XYZ")
+    valve_wheel.rotation_euler = Euler(
+        (
+            wheel_rot_rest.x,
+            wheel_rot_rest.y + math.radians(1.0 + 5.0 * critical + 8.0 * danger) * math.sin(fast_phase + 0.5),
+            wheel_rot_rest.z,
+        ),
+        "XYZ",
+    )
     valve_wheel.keyframe_insert(data_path="rotation_euler", frame=frame)
 
 for action in bpy.data.actions:

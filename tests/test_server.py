@@ -2,22 +2,23 @@
 
 import asyncio
 import json
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
+from blender_mcp_server.headless import HeadlessBlenderExecutor
 from blender_mcp_server.server import (
-    mcp,
-    BlenderConnection,
     HEADLESS_JOB_MANAGER,
+    BlenderConnection,
+    job_cancel,
+    job_list,
+    job_status,
+    main,
+    mcp,
     python_exec,
     python_exec_async,
     render_still,
-    job_status,
-    job_cancel,
-    job_list,
-    main,
 )
-from blender_mcp_server.headless import HeadlessBlenderExecutor
 
 
 class TestToolRegistration:
@@ -98,9 +99,7 @@ class TestToolRegistration:
 
     def test_context_parameter_not_exposed_in_tool_schema(self):
         for tool in mcp._tool_manager._tools.values():
-            schema = getattr(tool, "inputSchema", None) or getattr(
-                tool, "parameters", {}
-            )
+            schema = getattr(tool, "inputSchema", None) or getattr(tool, "parameters", {})
             properties = schema.get("properties", {})
             assert "ctx" not in properties, f"Tool {tool.name} exposes ctx in schema"
 
@@ -114,9 +113,7 @@ class TestBlenderConnection:
         response = {"id": "test-id", "success": True, "result": {"name": "Cube"}}
 
         mock_reader = AsyncMock()
-        mock_reader.readline = AsyncMock(
-            return_value=json.dumps(response).encode() + b"\n"
-        )
+        mock_reader.readline = AsyncMock(return_value=json.dumps(response).encode() + b"\n")
         mock_writer = AsyncMock()
         mock_writer.write = MagicMock()
         mock_writer.drain = AsyncMock()
@@ -133,9 +130,7 @@ class TestBlenderConnection:
         response = {"id": "test-id", "success": False, "error": "Object not found"}
 
         mock_reader = AsyncMock()
-        mock_reader.readline = AsyncMock(
-            return_value=json.dumps(response).encode() + b"\n"
-        )
+        mock_reader.readline = AsyncMock(return_value=json.dumps(response).encode() + b"\n")
         mock_writer = AsyncMock()
         mock_writer.write = MagicMock()
         mock_writer.drain = AsyncMock()
@@ -174,9 +169,7 @@ class TestBlenderConnection:
         response = {"id": "test-id", "success": True, "result": {}}
 
         mock_reader = AsyncMock()
-        mock_reader.readline = AsyncMock(
-            return_value=json.dumps(response).encode() + b"\n"
-        )
+        mock_reader.readline = AsyncMock(return_value=json.dumps(response).encode() + b"\n")
         mock_writer = AsyncMock()
         mock_writer.write = MagicMock()
         mock_writer.drain = AsyncMock()
@@ -202,10 +195,7 @@ class TestHeadlessExecutor:
         proc = AsyncMock()
         proc.communicate = AsyncMock(
             return_value=(
-                (
-                    "noise before\n"
-                    "__BLENDER_MCP_RESULT__=" + json.dumps(payload) + "\n"
-                ).encode(),
+                ("noise before\n__BLENDER_MCP_RESULT__=" + json.dumps(payload) + "\n").encode(),
                 b"",
             )
         )
@@ -225,14 +215,23 @@ class TestHeadlessExecutor:
 
         proc = AsyncMock()
         proc.communicate = AsyncMock(
-            return_value=(( "__BLENDER_MCP_RESULT__=" + json.dumps({
-                "result": {"ok": True},
-                "stdout": "",
-                "stderr": "",
-                "error": None,
-                "timed_out": False,
-                "cancelled": False,
-            }) + "\n").encode(), b"")
+            return_value=(
+                (
+                    "__BLENDER_MCP_RESULT__="
+                    + json.dumps(
+                        {
+                            "result": {"ok": True},
+                            "stdout": "",
+                            "stderr": "",
+                            "error": None,
+                            "timed_out": False,
+                            "cancelled": False,
+                        }
+                    )
+                    + "\n"
+                ).encode(),
+                b"",
+            )
         )
         proc.returncode = 0
 
@@ -271,7 +270,16 @@ class TestHeadlessTransportTools:
 
         with patch(
             "blender_mcp_server.server.HeadlessBlenderExecutor.execute",
-            new=AsyncMock(return_value={"result": {"ok": True}, "stdout": "", "stderr": "", "error": None, "cancelled": False, "timed_out": False}),
+            new=AsyncMock(
+                return_value={
+                    "result": {"ok": True},
+                    "stdout": "",
+                    "stderr": "",
+                    "error": None,
+                    "cancelled": False,
+                    "timed_out": False,
+                }
+            ),
         ):
             created = json.loads(
                 await python_exec_async(
@@ -340,9 +348,7 @@ class TestHeadlessTransportTools:
             "blender_mcp_server.server.HeadlessBlenderExecutor.execute",
             new=slow_execute,
         ):
-            created = json.loads(
-                await python_exec_async(ctx, code="pass", transport="headless")
-            )
+            created = json.loads(await python_exec_async(ctx, code="pass", transport="headless"))
             job_id = created["job_id"]
             cancelled = json.loads(await job_cancel(ctx, job_id))
 

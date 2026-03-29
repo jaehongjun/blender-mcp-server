@@ -15,6 +15,7 @@ Result:
     skipped (list[str]): Objects not found
     rb_type (str): Rigid body type used
 """
+
 import bpy
 
 obj_names = args.get("objects", [])

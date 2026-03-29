@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
+
 from blender_mcp_server.headless import HeadlessBlenderExecutor, HeadlessJobManager
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,9 @@ class BlenderConnection:
         if not self._writer:
             await self.connect()
 
+        assert self._reader is not None
+        assert self._writer is not None
+
         request = {
             "id": str(uuid.uuid4()),
             "command": command,
@@ -60,9 +64,7 @@ class BlenderConnection:
 
                 response = json.loads(line)
                 if not response.get("success"):
-                    raise RuntimeError(
-                        response.get("error", "Unknown error from Blender")
-                    )
+                    raise RuntimeError(response.get("error", "Unknown error from Blender"))
                 return response.get("result")
             except (ConnectionError, OSError) as e:
                 # Connection lost — reset and re-raise
@@ -78,9 +80,7 @@ async def blender_lifespan(server: FastMCP):
     try:
         await conn.connect()
     except OSError:
-        logger.warning(
-            "Could not connect to Blender on startup. Will retry on first tool call."
-        )
+        logger.warning("Could not connect to Blender on startup. Will retry on first tool call.")
     yield conn
     await conn.disconnect()
 
@@ -93,7 +93,7 @@ mcp = FastMCP(
 
 
 def _get_conn(ctx: Context) -> BlenderConnection:
-    return ctx.request_context.lifespan_context
+    return ctx.request_context.lifespan_context  # type: ignore[no-any-return]
 
 
 # -- Scene tools --
@@ -222,9 +222,7 @@ async def object_rotate(
     description="Set the scale of an object. Provide scale as [x, y, z].",
 )
 async def object_scale(ctx: Context, name: str, scale: list[float]) -> str:
-    result = await _get_conn(ctx).send_command(
-        "object.scale", {"name": name, "scale": scale}
-    )
+    result = await _get_conn(ctx).send_command("object.scale", {"name": name, "scale": scale})
     return json.dumps(result, indent=2)
 
 
@@ -247,9 +245,7 @@ async def object_duplicate(ctx: Context, name: str, new_name: str | None = None)
     name="blender_material_create",
     description="Create a new material. Optionally set an initial base color as [r, g, b] with values 0-1.",
 )
-async def material_create(
-    ctx: Context, name: str = "Material", color: list[float] | None = None
-) -> str:
+async def material_create(ctx: Context, name: str = "Material", color: list[float] | None = None) -> str:
     params: dict[str, Any] = {"name": name}
     if color:
         params["color"] = color
@@ -262,9 +258,7 @@ async def material_create(
     description="Assign an existing material to an object.",
 )
 async def material_assign(ctx: Context, object: str, material: str) -> str:
-    result = await _get_conn(ctx).send_command(
-        "material.assign", {"object": object, "material": material}
-    )
+    result = await _get_conn(ctx).send_command("material.assign", {"object": object, "material": material})
     return json.dumps(result, indent=2)
 
 
@@ -273,9 +267,7 @@ async def material_assign(ctx: Context, object: str, material: str) -> str:
     description="Set the base color of a material. Color is [r, g, b] with values 0-1.",
 )
 async def material_set_color(ctx: Context, name: str, color: list[float]) -> str:
-    result = await _get_conn(ctx).send_command(
-        "material.set_color", {"name": name, "color": color}
-    )
+    result = await _get_conn(ctx).send_command("material.set_color", {"name": name, "color": color})
     return json.dumps(result, indent=2)
 
 
@@ -284,9 +276,7 @@ async def material_set_color(ctx: Context, name: str, color: list[float]) -> str
     description="Set an image texture as the base color of a material. Provide the file path to the image.",
 )
 async def material_set_texture(ctx: Context, name: str, filepath: str) -> str:
-    result = await _get_conn(ctx).send_command(
-        "material.set_texture", {"name": name, "filepath": filepath}
-    )
+    result = await _get_conn(ctx).send_command("material.set_texture", {"name": name, "filepath": filepath})
     return json.dumps(result, indent=2)
 
 

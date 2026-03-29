@@ -12,6 +12,7 @@ Result:
     frame_current (int): Current frame after change
     fps (int): Scene FPS
 """
+
 import bpy
 
 scene = bpy.context.scene

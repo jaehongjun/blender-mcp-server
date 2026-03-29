@@ -14,6 +14,7 @@ Result:
     resolution (int): Resolution set
     cache_dir (str): Cache directory set
 """
+
 import bpy
 
 
@@ -44,6 +45,7 @@ def create_cube_mesh(name: str, size: float):
     bpy.context.scene.collection.objects.link(obj)
     return obj
 
+
 name = args.get("domain_name", "FluidDomain")
 location = args.get("location", [0, 0, 2])
 size = args.get("size", 4.0)
@@ -59,7 +61,7 @@ modifier = domain.modifiers.get("Fluid")
 if modifier is None:
     modifier = domain.modifiers.new(name="Fluid", type="FLUID")
 
-modifier.fluid_type = 'DOMAIN'
+modifier.fluid_type = "DOMAIN"
 settings = modifier.domain_settings
 settings.domain_type = domain_type
 settings.resolution_max = resolution
@@ -67,7 +69,7 @@ settings.cache_directory = cache_dir
 modifier.show_viewport = show_viewport
 
 # Make domain wireframe for visibility
-domain.display_type = 'WIRE'
+domain.display_type = "WIRE"
 
 __result__ = {
     "domain": domain.name,

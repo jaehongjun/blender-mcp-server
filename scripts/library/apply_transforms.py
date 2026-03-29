@@ -10,6 +10,7 @@ Result:
     applied (list[str]): Objects that had transforms applied
     skipped (list[str]): Objects not found
 """
+
 import bpy
 
 obj_names = args.get("objects", [])
@@ -21,7 +22,7 @@ applied = []
 skipped = []
 
 # Deselect all first
-bpy.ops.object.select_all(action='DESELECT')
+bpy.ops.object.select_all(action="DESELECT")
 
 for name in obj_names:
     obj = bpy.data.objects.get(name)

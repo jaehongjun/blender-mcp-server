@@ -10,6 +10,7 @@ Result:
     configured (list[str]): Objects successfully configured
     skipped (list[str]): Objects not found
 """
+
 import bpy
 
 obj_names = args.get("objects", [])
@@ -28,17 +29,17 @@ for name in obj_names:
 
     fluid_mod = obj.modifiers.get("Fluid")
     if fluid_mod is None:
-        fluid_mod = obj.modifiers.new(name="Fluid", type='FLUID')
-    fluid_mod.fluid_type = 'EFFECTOR'
+        fluid_mod = obj.modifiers.new(name="Fluid", type="FLUID")
+    fluid_mod.fluid_type = "EFFECTOR"
     eff = fluid_mod.effector_settings
     eff.effector_type = effector_type
     eff.surface_distance = surface_distance
 
     # Optionally add physics collision as well
     if use_effector:
-        has_collision = any(m.type == 'COLLISION' for m in obj.modifiers)
+        has_collision = any(m.type == "COLLISION" for m in obj.modifiers)
         if not has_collision:
-            obj.modifiers.new(name="Collision", type='COLLISION')
+            obj.modifiers.new(name="Collision", type="COLLISION")
     configured.append(name)
 
 __result__ = {

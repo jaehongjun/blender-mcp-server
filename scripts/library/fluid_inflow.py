@@ -17,6 +17,7 @@ Result:
     name (str): Object name
     flow_type (str): Flow type set
 """
+
 import bpy
 
 
@@ -73,7 +74,7 @@ modifier = obj.modifiers.get("Fluid")
 if modifier is None:
     modifier = obj.modifiers.new(name="Fluid", type="FLUID")
 
-modifier.fluid_type = 'FLOW'
+modifier.fluid_type = "FLOW"
 modifier.show_viewport = show_viewport
 flow = modifier.flow_settings
 flow.flow_type = flow_type

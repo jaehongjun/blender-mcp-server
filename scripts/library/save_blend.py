@@ -10,8 +10,10 @@ Result:
     filepath (str): Absolute path of the saved file
     compressed (bool): Whether compression was used
 """
-import bpy
+
 import os
+
+import bpy
 
 filepath = args.get("filepath")
 compress = args.get("compress", True)
@@ -28,9 +30,7 @@ if filepath:
     )
 else:
     if not bpy.data.filepath:
-        raise ValueError(
-            "File has never been saved. Provide a 'filepath' argument."
-        )
+        raise ValueError("File has never been saved. Provide a 'filepath' argument.")
     bpy.ops.wm.save_mainfile(compress=compress)
     abs_path = bpy.data.filepath
 

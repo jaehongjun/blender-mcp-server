@@ -12,6 +12,7 @@ Result:
     moved (dict[str, list[str]]): Map of collection name to objects moved in
     skipped (list[str]): Objects not found
 """
+
 import bpy
 
 collections_spec = args.get("collections", [])

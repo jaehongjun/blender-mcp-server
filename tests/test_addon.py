@@ -1,12 +1,12 @@
 """Tests for the Blender add-on command handler using mocked bpy."""
 
-import json
 import os
 import sys
 import tempfile
 import threading
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 def _create_mock_bpy():
@@ -197,9 +197,7 @@ class TestServerExecution:
 
         with patch.object(server, "_process_request", return_value=expected) as process:
             worker = threading.Thread(
-                target=lambda: response_holder.setdefault(
-                    "response", server._submit_request(request)
-                )
+                target=lambda: response_holder.setdefault("response", server._submit_request(request))
             )
             worker.start()
             server._drain_request_queue()
@@ -226,65 +224,92 @@ class TestPythonExecute:
     """Tests for the python.execute command handler."""
 
     def test_execution_namespace_exposes_safe_mesh_helper(self, handler):
-        result = handler.handle("python.execute", {
-            "code": "__result__ = callable(mcp_create_mesh) and math.pi > 3",
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": "__result__ = callable(mcp_create_mesh) and math.pi > 3",
+            },
+        )
         assert result["result"] is True
 
     def test_inline_code_returns_result(self, handler):
-        result = handler.handle("python.execute", {
-            "code": "__result__ = {'answer': 42}",
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": "__result__ = {'answer': 42}",
+            },
+        )
         assert result["result"] == {"answer": 42}
         assert result["error"] is None
         assert "duration_seconds" in result
 
     def test_inline_code_captures_stdout(self, handler):
-        result = handler.handle("python.execute", {
-            "code": "print('hello world')",
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": "print('hello world')",
+            },
+        )
         assert "hello world" in result["stdout"]
         assert result["error"] is None
 
     def test_inline_code_captures_stderr(self, handler):
-        result = handler.handle("python.execute", {
-            "code": "import sys; sys.stderr.write('warn\\n')",
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": "import sys; sys.stderr.write('warn\\n')",
+            },
+        )
         assert "warn" in result["stderr"]
 
     def test_inline_code_exception_returns_error(self, handler):
-        result = handler.handle("python.execute", {
-            "code": "raise ValueError('boom')",
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": "raise ValueError('boom')",
+            },
+        )
         assert result["error"] is not None
         assert "ValueError" in result["error"]
         assert "boom" in result["error"]
         assert result["result"] is None
 
     def test_args_passed_to_namespace(self, handler):
-        result = handler.handle("python.execute", {
-            "code": "__result__ = args['x'] + args['y']",
-            "args": {"x": 10, "y": 20},
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": "__result__ = args['x'] + args['y']",
+                "args": {"x": 10, "y": 20},
+            },
+        )
         assert result["result"] == 30
 
     def test_bpy_available_in_namespace(self, handler):
-        result = handler.handle("python.execute", {
-            "code": "__result__ = bpy.context.scene.name",
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": "__result__ = bpy.context.scene.name",
+            },
+        )
         assert result["result"] == "Scene"
 
     def test_no_result_set_returns_null(self, handler):
-        result = handler.handle("python.execute", {
-            "code": "x = 1 + 1",
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": "x = 1 + 1",
+            },
+        )
         assert result["result"] is None
         assert result["error"] is None
 
     def test_non_json_result_falls_back_to_repr(self, handler):
-        result = handler.handle("python.execute", {
-            "code": "__result__ = {1, 2, 3}",
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": "__result__ = {1, 2, 3}",
+            },
+        )
         # Sets aren't JSON-serializable, should get repr
         assert result["result"] is not None
         assert result["error"] is None
@@ -295,10 +320,13 @@ class TestPythonExecute:
 
     def test_both_code_and_script_raises(self, handler):
         with pytest.raises(ValueError, match="not both"):
-            handler.handle("python.execute", {
-                "code": "pass",
-                "script_path": "/some/file.py",
-            })
+            handler.handle(
+                "python.execute",
+                {
+                    "code": "pass",
+                    "script_path": "/some/file.py",
+                },
+            )
 
     def test_script_path_execution(self, handler, addon_module):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -309,10 +337,13 @@ class TestPythonExecute:
             # Set the approved roots to include tmpdir
             addon_module.APPROVED_SCRIPT_ROOTS = [tmpdir]
             try:
-                result = handler.handle("python.execute", {
-                    "script_path": script,
-                    "args": {"name": "test"},
-                })
+                result = handler.handle(
+                    "python.execute",
+                    {
+                        "script_path": script,
+                        "args": {"name": "test"},
+                    },
+                )
                 assert result["result"] == "test executed"
                 assert result["error"] is None
             finally:
@@ -322,23 +353,32 @@ class TestPythonExecute:
         addon_module.APPROVED_SCRIPT_ROOTS = ["/tmp"]
         try:
             with pytest.raises(FileNotFoundError, match="not found"):
-                handler.handle("python.execute", {
-                    "script_path": "/tmp/nonexistent_script_abc123.py",
-                })
+                handler.handle(
+                    "python.execute",
+                    {
+                        "script_path": "/tmp/nonexistent_script_abc123.py",
+                    },
+                )
         finally:
             addon_module.APPROVED_SCRIPT_ROOTS = []
 
     def test_blocked_module_import(self, handler):
-        result = handler.handle("python.execute", {
-            "code": "import subprocess",
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": "import subprocess",
+            },
+        )
         assert result["error"] is not None
         assert "blocked" in result["error"].lower() or "ImportError" in result["error"]
 
     def test_shutil_import_is_allowed(self, handler):
-        result = handler.handle("python.execute", {
-            "code": "import shutil\n__result__ = hasattr(shutil, 'rmtree')",
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": "import shutil\n__result__ = hasattr(shutil, 'rmtree')",
+            },
+        )
         assert result["error"] is None
         assert result["result"] is True
 
@@ -350,9 +390,12 @@ class TestPythonExecute:
         assert pybuiltins.__import__ is original_import
 
     def test_allowed_module_import(self, handler):
-        result = handler.handle("python.execute", {
-            "code": "import json; __result__ = json.dumps({'ok': True})",
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": "import json; __result__ = json.dumps({'ok': True})",
+            },
+        )
         assert result["error"] is None
         assert result["result"] == '{"ok": true}'
 
@@ -361,18 +404,17 @@ class TestPythonSandbox:
     """Tests for MCP-103 sandbox and path restrictions."""
 
     def test_script_outside_roots_rejected(self, handler, addon_module):
-        with tempfile.TemporaryDirectory() as allowed_dir:
-            with tempfile.TemporaryDirectory() as forbidden_dir:
-                script = os.path.join(forbidden_dir, "evil.py")
-                with open(script, "w") as f:
-                    f.write("pass\n")
+        with tempfile.TemporaryDirectory() as allowed_dir, tempfile.TemporaryDirectory() as forbidden_dir:
+            script = os.path.join(forbidden_dir, "evil.py")
+            with open(script, "w") as f:
+                f.write("pass\n")
 
-                addon_module.APPROVED_SCRIPT_ROOTS = [allowed_dir]
-                try:
-                    with pytest.raises(PermissionError, match="outside approved"):
-                        handler.handle("python.execute", {"script_path": script})
-                finally:
-                    addon_module.APPROVED_SCRIPT_ROOTS = []
+            addon_module.APPROVED_SCRIPT_ROOTS = [allowed_dir]
+            try:
+                with pytest.raises(PermissionError, match="outside approved"):
+                    handler.handle("python.execute", {"script_path": script})
+            finally:
+                addon_module.APPROVED_SCRIPT_ROOTS = []
 
     def test_script_inside_roots_accepted(self, handler, addon_module):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -435,9 +477,12 @@ class TestJobLifecycle:
     """Tests for MCP-104 async job support."""
 
     def test_execute_async_returns_job_id(self, handler):
-        result = handler.handle("python.execute_async", {
-            "code": "__result__ = 'done'",
-        })
+        result = handler.handle(
+            "python.execute_async",
+            {
+                "code": "__result__ = 'done'",
+            },
+        )
         assert "job_id" in result
         assert result["job_id"].startswith("job-")
 
@@ -452,9 +497,12 @@ class TestJobLifecycle:
         assert result1["job_id"] in job_ids
 
     def test_job_cancel_sets_cancelled(self, handler, addon_module):
-        result = handler.handle("python.execute_async", {
-            "code": "import time; time.sleep(10)",
-        })
+        result = handler.handle(
+            "python.execute_async",
+            {
+                "code": "import time; time.sleep(10)",
+            },
+        )
         job_id = result["job_id"]
         cancel_result = handler.handle("job.cancel", {"job_id": job_id})
         assert cancel_result["status"] == "cancelled"
@@ -481,9 +529,12 @@ class TestJobLifecycle:
 
     def test_job_status_after_sync_execution(self, handler, addon_module):
         """Run the job via the timer callback and verify completion."""
-        result = handler.handle("python.execute_async", {
-            "code": "__result__ = 'async_done'",
-        })
+        result = handler.handle(
+            "python.execute_async",
+            {
+                "code": "__result__ = 'async_done'",
+            },
+        )
         job_id = result["job_id"]
 
         # Manually trigger the timer callback that executes the job
@@ -495,9 +546,12 @@ class TestJobLifecycle:
         assert status["error"] is None
 
     def test_failed_job_captures_error(self, handler, addon_module):
-        result = handler.handle("python.execute_async", {
-            "code": "raise RuntimeError('async boom')",
-        })
+        result = handler.handle(
+            "python.execute_async",
+            {
+                "code": "raise RuntimeError('async boom')",
+            },
+        )
         job_id = result["job_id"]
 
         addon_module._job_manager._execute_job(job_id)
@@ -517,24 +571,33 @@ class TestOutputBounding:
 
     def test_stdout_is_capped(self, handler, addon_module):
         limit = addon_module.MAX_OUTPUT_SIZE
-        result = handler.handle("python.execute", {
-            "code": f"print('x' * {limit + 1000})",
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": f"print('x' * {limit + 1000})",
+            },
+        )
         assert len(result["stdout"]) <= limit + 200  # Allow for truncation message
         assert "truncated" in result["stdout"]
 
     def test_stderr_is_capped(self, handler, addon_module):
         limit = addon_module.MAX_OUTPUT_SIZE
-        result = handler.handle("python.execute", {
-            "code": f"import sys; sys.stderr.write('e' * {limit + 500})",
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": f"import sys; sys.stderr.write('e' * {limit + 500})",
+            },
+        )
         assert len(result["stderr"]) <= limit + 200
         assert "truncated" in result["stderr"]
 
     def test_short_output_not_capped(self, handler):
-        result = handler.handle("python.execute", {
-            "code": "print('short')",
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": "print('short')",
+            },
+        )
         assert "truncated" not in result["stdout"]
         assert "short" in result["stdout"]
 
@@ -553,9 +616,12 @@ class TestOutputBounding:
         assert "oops" in last["error_summary"]
 
     def test_last_execution_updated_by_job(self, handler, addon_module):
-        result = handler.handle("python.execute_async", {
-            "code": "__result__ = 'job_done'",
-        })
+        result = handler.handle(
+            "python.execute_async",
+            {
+                "code": "__result__ = 'job_done'",
+            },
+        )
         addon_module._job_manager._execute_job(result["job_id"])
         last = addon_module._last_execution
         assert last["status"] == "succeeded"
@@ -591,9 +657,7 @@ class TestExecutionControl:
             "python.execute_async",
             {
                 "code": (
-                    "while True:\n"
-                    "    if __cancel_event__.is_set():\n"
-                    "        raise RuntimeError('stop requested')\n"
+                    "while True:\n    if __cancel_event__.is_set():\n        raise RuntimeError('stop requested')\n"
                 ),
                 "timeout_seconds": 1,
             },
@@ -611,39 +675,57 @@ class TestResultSerialization:
     """Additional tests for JSON-safe result handling."""
 
     def test_nested_dict_result(self, handler):
-        result = handler.handle("python.execute", {
-            "code": "__result__ = {'a': {'b': [1, 2, 3]}}",
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": "__result__ = {'a': {'b': [1, 2, 3]}}",
+            },
+        )
         assert result["result"] == {"a": {"b": [1, 2, 3]}}
 
     def test_list_result(self, handler):
-        result = handler.handle("python.execute", {
-            "code": "__result__ = [1, 'two', 3.0, None, True]",
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": "__result__ = [1, 'two', 3.0, None, True]",
+            },
+        )
         assert result["result"] == [1, "two", 3.0, None, True]
 
     def test_string_result(self, handler):
-        result = handler.handle("python.execute", {
-            "code": "__result__ = 'hello'",
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": "__result__ = 'hello'",
+            },
+        )
         assert result["result"] == "hello"
 
     def test_numeric_result(self, handler):
-        result = handler.handle("python.execute", {
-            "code": "__result__ = 3.14159",
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": "__result__ = 3.14159",
+            },
+        )
         assert result["result"] == 3.14159
 
     def test_bool_result(self, handler):
-        result = handler.handle("python.execute", {
-            "code": "__result__ = False",
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": "__result__ = False",
+            },
+        )
         assert result["result"] is False
 
     def test_object_result_uses_repr(self, handler):
-        result = handler.handle("python.execute", {
-            "code": "class Foo: pass\n__result__ = Foo()",
-        })
+        result = handler.handle(
+            "python.execute",
+            {
+                "code": "class Foo: pass\n__result__ = Foo()",
+            },
+        )
         # Custom objects can't be JSON serialized, should get repr
         assert result["result"] is not None
         assert isinstance(result["result"], str)
@@ -661,18 +743,17 @@ class TestAsyncInlineDisabled:
             addon_module.ALLOW_INLINE_CODE = True
 
     def test_async_script_path_outside_roots_rejected(self, handler, addon_module):
-        with tempfile.TemporaryDirectory() as allowed_dir:
-            with tempfile.TemporaryDirectory() as forbidden_dir:
-                script = os.path.join(forbidden_dir, "bad.py")
-                with open(script, "w") as f:
-                    f.write("pass\n")
+        with tempfile.TemporaryDirectory() as allowed_dir, tempfile.TemporaryDirectory() as forbidden_dir:
+            script = os.path.join(forbidden_dir, "bad.py")
+            with open(script, "w") as f:
+                f.write("pass\n")
 
-                addon_module.APPROVED_SCRIPT_ROOTS = [allowed_dir]
-                try:
-                    with pytest.raises(PermissionError, match="outside approved"):
-                        handler.handle("python.execute_async", {"script_path": script})
-                finally:
-                    addon_module.APPROVED_SCRIPT_ROOTS = []
+            addon_module.APPROVED_SCRIPT_ROOTS = [allowed_dir]
+            try:
+                with pytest.raises(PermissionError, match="outside approved"):
+                    handler.handle("python.execute_async", {"script_path": script})
+            finally:
+                addon_module.APPROVED_SCRIPT_ROOTS = []
 
     def test_async_missing_code_and_script_raises(self, handler):
         with pytest.raises(ValueError, match="Either"):
@@ -680,25 +761,25 @@ class TestAsyncInlineDisabled:
 
     def test_async_both_code_and_script_raises(self, handler):
         with pytest.raises(ValueError, match="not both"):
-            handler.handle("python.execute_async", {
-                "code": "pass",
-                "script_path": "/some/file.py",
-            })
+            handler.handle(
+                "python.execute_async",
+                {
+                    "code": "pass",
+                    "script_path": "/some/file.py",
+                },
+            )
 
 
 class TestDamBreakDemo:
     """Validate the dam-break demo scripts."""
 
-    DEMOS_DIR = os.path.join(
-        os.path.dirname(__file__), os.pardir, "scripts", "demos"
-    )
-    LIBRARY_DIR = os.path.join(
-        os.path.dirname(__file__), os.pardir, "scripts", "library"
-    )
+    DEMOS_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "scripts", "demos")
+    LIBRARY_DIR = os.path.join(os.path.dirname(__file__), os.pardir, "scripts", "library")
 
     def test_dam_break_scene_parses(self):
         """The monolithic demo script must be syntactically valid Python."""
         import ast
+
         path = os.path.join(self.DEMOS_DIR, "dam_break_scene.py")
         with open(path) as f:
             ast.parse(f.read(), filename=path)
@@ -706,6 +787,7 @@ class TestDamBreakDemo:
     def test_run_dam_break_parses(self):
         """The bridge caller script must be syntactically valid."""
         import ast
+
         path = os.path.join(self.DEMOS_DIR, "run_dam_break.py")
         with open(path) as f:
             ast.parse(f.read(), filename=path)
@@ -723,6 +805,7 @@ class TestDamBreakDemo:
         sys.path.insert(0, self.DEMOS_DIR)
         try:
             import run_dam_break
+
             steps = run_dam_break.build_steps(self.LIBRARY_DIR)
         finally:
             sys.path.pop(0)
@@ -730,18 +813,19 @@ class TestDamBreakDemo:
 
         assert len(steps) >= 11
         labels = [s["label"] for s in steps]
-        assert any("frame range" in l.lower() for l in labels)
-        assert any("fluid domain" in l.lower() for l in labels)
-        assert any("camera" in l.lower() for l in labels)
-        assert any("collider" in l.lower() for l in labels)
-        assert any("rigid" in l.lower() for l in labels)
-        assert any("keyframe" in l.lower() or "dolly" in l.lower() for l in labels)
+        assert any("frame range" in label.lower() for label in labels)
+        assert any("fluid domain" in label.lower() for label in labels)
+        assert any("camera" in label.lower() for label in labels)
+        assert any("collider" in label.lower() for label in labels)
+        assert any("rigid" in label.lower() for label in labels)
+        assert any("keyframe" in label.lower() or "dolly" in label.lower() for label in labels)
 
     def test_run_dam_break_script_paths_exist(self):
         """Every library script referenced by build_steps must exist."""
         sys.path.insert(0, self.DEMOS_DIR)
         try:
             import run_dam_break
+
             steps = run_dam_break.build_steps(self.LIBRARY_DIR)
         finally:
             sys.path.pop(0)
@@ -749,15 +833,14 @@ class TestDamBreakDemo:
 
         for step in steps:
             if step["method"] == "script":
-                assert os.path.isfile(step["script_path"]), (
-                    f"Missing library script: {step['script_path']}"
-                )
+                assert os.path.isfile(step["script_path"]), f"Missing library script: {step['script_path']}"
 
     def test_run_dam_break_stops_on_inner_script_error(self):
         """run_demo() must fail fast if python.execute returns an inner script error."""
         sys.path.insert(0, self.DEMOS_DIR)
         try:
             import run_dam_break
+
             with patch.object(
                 run_dam_break,
                 "exec_inline",
@@ -780,6 +863,7 @@ class TestDamBreakDemo:
         sys.path.insert(0, self.DEMOS_DIR)
         try:
             import run_dam_break
+
             with tempfile.TemporaryDirectory() as tmpdir:
                 script_path = os.path.join(tmpdir, "sample.py")
                 with open(script_path, "w") as f:
@@ -801,15 +885,16 @@ class TestDamBreakDemo:
     def test_dam_break_scene_executes_in_mock(self, handler, addon_module):
         """The monolithic script should execute without import errors
         in the mocked bpy environment (logic errors from mocks are OK)."""
-        path = os.path.realpath(
-            os.path.join(self.DEMOS_DIR, "dam_break_scene.py")
-        )
+        path = os.path.realpath(os.path.join(self.DEMOS_DIR, "dam_break_scene.py"))
         addon_module.APPROVED_SCRIPT_ROOTS = [os.path.dirname(path)]
         try:
-            result = handler.handle("python.execute", {
-                "script_path": path,
-                "args": {"resolution": 16, "frame_end": 10},
-            })
+            result = handler.handle(
+                "python.execute",
+                {
+                    "script_path": path,
+                    "args": {"resolution": 16, "frame_end": 10},
+                },
+            )
             # With mocked bpy the script may error on mock attribute access,
             # but it should not raise an import or syntax error.
             # If it succeeds, validate the result structure.
@@ -824,6 +909,7 @@ class TestDamBreakDemo:
         """Every .py in scripts/library/ must be syntactically valid."""
         import ast
         import glob as globmod
+
         for path in sorted(globmod.glob(os.path.join(self.LIBRARY_DIR, "*.py"))):
             with open(path) as f:
                 ast.parse(f.read(), filename=path)

@@ -8,24 +8,46 @@ bl_info = {
     "category": "Development",
 }
 
-import bpy
 import builtins
 import errno
-import json
 import io
+import json
+import logging
 import math
 import os
 import queue
 import socket
 import sys
 import threading
-import traceback
-import logging
 import time
+import traceback
 import uuid
-from contextlib import redirect_stdout, redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from typing import Any
+
+import bpy
 from bpy.app.handlers import persistent
+
+from addon.models import (
+    ExportFileParams,
+    JobIdParams,
+    MaterialAssignParams,
+    MaterialCreateParams,
+    MaterialSetColorParams,
+    MaterialSetTextureParams,
+    ObjectCreateMeshParams,
+    ObjectDeleteParams,
+    ObjectDuplicateParams,
+    ObjectGetHierarchyParams,
+    ObjectGetTransformParams,
+    ObjectRotateParams,
+    ObjectScaleParams,
+    ObjectTranslateParams,
+    PythonExecuteParams,
+    RenderAnimationParams,
+    RenderStillParams,
+    SceneListObjectsParams,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -242,9 +264,7 @@ def _build_primitive_pydata(
     }
     builder = builders.get(mesh_type)
     if builder is None:
-        raise ValueError(
-            f"Unknown mesh type: {mesh_type}. Options: {list(builders.keys())}"
-        )
+        raise ValueError(f"Unknown mesh type: {mesh_type}. Options: {list(builders.keys())}")
     return builder(size)
 
 
@@ -380,6 +400,31 @@ class CommandHandler:
         self._handlers["job.cancel"] = self._job_cancel
         self._handlers["job.list"] = self._job_list
 
+    _VALIDATORS: dict[str, type] = {
+        "scene.list_objects": SceneListObjectsParams,
+        "object.get_transform": ObjectGetTransformParams,
+        "object.get_hierarchy": ObjectGetHierarchyParams,
+        "object.create_mesh": ObjectCreateMeshParams,
+        "object.delete": ObjectDeleteParams,
+        "object.translate": ObjectTranslateParams,
+        "object.rotate": ObjectRotateParams,
+        "object.scale": ObjectScaleParams,
+        "object.duplicate": ObjectDuplicateParams,
+        "material.create": MaterialCreateParams,
+        "material.assign": MaterialAssignParams,
+        "material.set_color": MaterialSetColorParams,
+        "material.set_texture": MaterialSetTextureParams,
+        "render.still": RenderStillParams,
+        "render.animation": RenderAnimationParams,
+        "export.gltf": ExportFileParams,
+        "export.obj": ExportFileParams,
+        "export.fbx": ExportFileParams,
+        "python.execute": PythonExecuteParams,
+        "python.execute_async": PythonExecuteParams,
+        "job.status": JobIdParams,
+        "job.cancel": JobIdParams,
+    }
+
     def handle(self, command: str, params: dict) -> Any:
         _sync_runtime_settings()
         # Security: check tool whitelist
@@ -388,6 +433,9 @@ class CommandHandler:
         handler = self._handlers.get(command)
         if not handler:
             raise ValueError(f"Unknown command: {command}")
+        validator = self._VALIDATORS.get(command)
+        if validator is not None:
+            params = validator.model_validate(params).model_dump(exclude_none=True)
         return handler(params)
 
     # -- Scene tools --
@@ -400,16 +448,13 @@ class CommandHandler:
         abs_path = os.path.abspath(bpy.path.abspath(filepath))
         if not ALLOWED_PATHS:
             # In safe mode with no allowed paths, only allow the blend file directory
-            blend_dir = (
-                os.path.dirname(bpy.data.filepath) if bpy.data.filepath else os.getcwd()
-            )
+            blend_dir = os.path.dirname(bpy.data.filepath) if bpy.data.filepath else os.getcwd()
             ALLOWED_PATHS.append(blend_dir)
         for allowed in ALLOWED_PATHS:
             if abs_path.startswith(os.path.abspath(allowed)):
                 return filepath
         raise PermissionError(
-            f"File access denied: '{filepath}' is outside allowed directories. "
-            f"Allowed: {ALLOWED_PATHS}"
+            f"File access denied: '{filepath}' is outside allowed directories. Allowed: {ALLOWED_PATHS}"
         )
 
     def _scene_get_info(self, params: dict) -> dict:
@@ -723,25 +768,16 @@ class CommandHandler:
 
         roots = APPROVED_SCRIPT_ROOTS
         if not roots:
-            blend_dir = (
-                os.path.dirname(bpy.data.filepath) if bpy.data.filepath else os.getcwd()
-            )
+            blend_dir = os.path.dirname(bpy.data.filepath) if bpy.data.filepath else os.getcwd()
             roots = [blend_dir]
 
         for root in roots:
-            if real_path.startswith(
-                os.path.realpath(root) + os.sep
-            ) or real_path == os.path.realpath(root):
+            if real_path.startswith(os.path.realpath(root) + os.sep) or real_path == os.path.realpath(root):
                 return real_path
-        raise PermissionError(
-            f"Script path denied: '{script_path}' is outside approved roots. "
-            f"Approved: {roots}"
-        )
+        raise PermissionError(f"Script path denied: '{script_path}' is outside approved roots. Approved: {roots}")
 
     @staticmethod
-    def _make_namespace(
-        args: dict, cancel_event: threading.Event | None = None
-    ) -> dict:
+    def _make_namespace(args: dict, cancel_event: threading.Event | None = None) -> dict:
         """Build the execution namespace for exec()."""
         import mathutils
 
@@ -788,9 +824,7 @@ class CommandHandler:
                 if cancel_event is not None and cancel_event.is_set():
                     raise ScriptExecutionCancelled("Execution cancelled")
                 if timeout_seconds > 0 and (time.monotonic() - start) > timeout_seconds:
-                    raise ScriptExecutionTimeout(
-                        f"Execution exceeded timeout of {timeout_seconds:.3f}s"
-                    )
+                    raise ScriptExecutionTimeout(f"Execution exceeded timeout of {timeout_seconds:.3f}s")
             return trace_calls
 
         sys.settrace(trace_calls)
@@ -801,7 +835,7 @@ class CommandHandler:
             elapsed = time.monotonic() - start
             tb_lines = traceback.format_exception(type(exc), exc, exc.__traceback__)
             # Filter out internal bridge frames
-            filtered = [l for l in tb_lines if "addon/__init__" not in l]
+            filtered = [line for line in tb_lines if "addon/__init__" not in line]
             error_str = "".join(filtered).strip()
             logger.warning(
                 "Script execution failed [%s] after %.3fs: %s",
@@ -842,9 +876,7 @@ class CommandHandler:
         code = params.get("code")
         script_path = params.get("script_path")
         args = params.get("args", {})
-        timeout_seconds = min(
-            params.get("timeout_seconds", DEFAULT_SYNC_TIMEOUT), MAX_SYNC_TIMEOUT
-        )
+        timeout_seconds = min(params.get("timeout_seconds", DEFAULT_SYNC_TIMEOUT), MAX_SYNC_TIMEOUT)
 
         request_id = f"exec-{uuid.uuid4().hex[:8]}"
 
@@ -855,31 +887,25 @@ class CommandHandler:
 
         if code is not None:
             if not ALLOW_INLINE_CODE:
-                raise PermissionError(
-                    "Inline code execution is disabled. Use script_path instead."
-                )
+                raise PermissionError("Inline code execution is disabled. Use script_path instead.")
             source_label = f"inline ({_truncate(code, LOG_CODE_PREVIEW_LEN)})"
         else:
             validated = self._validate_script_path(script_path)
-            with open(validated, "r") as f:
+            with open(validated) as f:
                 code = f.read()
             source_label = f"file ({script_path})"
 
         logger.info("python.execute [%s] starting: %s", request_id, source_label)
 
         namespace = self._make_namespace(args)
-        result = self._run_code(
-            code, namespace, timeout_seconds, request_id, cancel_event=None
-        )
+        result = self._run_code(code, namespace, timeout_seconds, request_id, cancel_event=None)
 
         _last_execution = {
             "request_id": request_id,
             "source": source_label,
             "status": "error" if result.get("error") else "ok",
             "duration_seconds": result.get("duration_seconds"),
-            "error_summary": (
-                _truncate(result["error"], 200) if result.get("error") else None
-            ),
+            "error_summary": (_truncate(result["error"], 200) if result.get("error") else None),
         }
         return result
 
@@ -887,9 +913,7 @@ class CommandHandler:
         code = params.get("code")
         script_path = params.get("script_path")
         args = params.get("args", {})
-        timeout_seconds = min(
-            params.get("timeout_seconds", DEFAULT_ASYNC_TIMEOUT), MAX_ASYNC_TIMEOUT
-        )
+        timeout_seconds = min(params.get("timeout_seconds", DEFAULT_ASYNC_TIMEOUT), MAX_ASYNC_TIMEOUT)
 
         if code and script_path:
             raise ValueError("Provide either 'code' or 'script_path', not both")
@@ -898,13 +922,11 @@ class CommandHandler:
 
         if code is not None:
             if not ALLOW_INLINE_CODE:
-                raise PermissionError(
-                    "Inline code execution is disabled. Use script_path instead."
-                )
+                raise PermissionError("Inline code execution is disabled. Use script_path instead.")
             source_label = f"inline ({_truncate(code, LOG_CODE_PREVIEW_LEN)})"
         else:
             validated = self._validate_script_path(script_path)
-            with open(validated, "r") as f:
+            with open(validated) as f:
                 code = f.read()
             source_label = f"file ({script_path})"
 
@@ -1015,7 +1037,7 @@ class JobManager:
 
         _last_execution = {
             "request_id": job_id,
-            "source": f"async job",
+            "source": "async job",
             "status": job["status"],
             "duration_seconds": round(elapsed, 4),
             "error_summary": _truncate(job["error"], 200) if job.get("error") else None,
@@ -1143,11 +1165,9 @@ class BlenderMCPServer:
             try:
                 conn, addr = self._server_socket.accept()
                 logger.info(f"MCP client connected from {addr}")
-                client_thread = threading.Thread(
-                    target=self._handle_client, args=(conn,), daemon=True
-                )
+                client_thread = threading.Thread(target=self._handle_client, args=(conn,), daemon=True)
                 client_thread.start()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 break
@@ -1317,9 +1337,7 @@ class MCP_PT_Panel(bpy.types.Panel):
         layout = self.layout
         global _server
         if _server and _server._running:
-            layout.label(
-                text=f"● Listening on {_server._host}:{_server._port}", icon="LINKED"
-            )
+            layout.label(text=f"● Listening on {_server._host}:{_server._port}", icon="LINKED")
             layout.operator("mcp.stop_server", text="Stop Server")
         else:
             layout.label(text="○ Server stopped", icon="UNLINKED")
@@ -1337,9 +1355,7 @@ class MCP_PT_Panel(bpy.types.Panel):
             if _last_execution["duration_seconds"] is not None:
                 box.label(text=f"Duration: {_last_execution['duration_seconds']:.3f}s")
             if _last_execution["error_summary"]:
-                box.label(
-                    text=f"Error: {_last_execution['error_summary']}", icon="ERROR"
-                )
+                box.label(text=f"Error: {_last_execution['error_summary']}", icon="ERROR")
 
 
 class MCP_OT_StartServer(bpy.types.Operator):

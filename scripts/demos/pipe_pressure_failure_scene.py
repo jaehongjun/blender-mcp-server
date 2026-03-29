@@ -24,7 +24,6 @@ import math
 import bpy
 from mathutils import Euler, Vector
 
-
 FRAME_END = int(args.get("frame_end", 120))
 FPS = int(args.get("fps", 24))
 RES_X = int(args.get("resolution_x", 1280))
@@ -152,7 +151,9 @@ def cone_y_data(segments: int = 20) -> tuple[list[tuple[float, float, float]], l
     return verts, faces
 
 
-def torus_data(major_segments: int = 28, minor_segments: int = 10) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
+def torus_data(
+    major_segments: int = 28, minor_segments: int = 10
+) -> tuple[list[tuple[float, float, float]], list[tuple[int, ...]]]:
     verts = []
     faces = []
     for i in range(major_segments):
@@ -397,7 +398,9 @@ gasket = create_pipe("Gasket", (-0.05, pipe_y, pipe_z), (0.05, pipe_y, pipe_z), 
 joint_core = create_pipe("JointCore", (-0.60, pipe_y, pipe_z), (0.60, pipe_y, pipe_z), 0.13, pipes_coll, mat_secondary)
 
 for idx, x in enumerate((-0.48, -0.34, -0.20, -0.06, 0.08, 0.22, 0.36, 0.50)):
-    ring = create_pipe(f"BellowsRing_{idx:02d}", (x - 0.02, pipe_y, pipe_z), (x + 0.02, pipe_y, pipe_z), 0.17, pipes_coll, mat_flange)
+    ring = create_pipe(
+        f"BellowsRing_{idx:02d}", (x - 0.02, pipe_y, pipe_z), (x + 0.02, pipe_y, pipe_z), 0.17, pipes_coll, mat_flange
+    )
     parent_keep_transform(ring, joint_rig)
 
 bolt_angles = [0.0, 1.10, 2.20, 3.14, 4.25, 5.35]
@@ -416,7 +419,9 @@ gauge_needle = create_box("GaugeNeedle", (0.02, 0.025, 0.22), (0.0, -2.29, 2.05)
 gauge_needle.location.z -= 0.05
 gauge_needle.rotation_euler = (0.0, 0.0, 0.0)
 
-valve_stem = create_pipe("ValveStem", (0.92, pipe_y, pipe_z + 0.15), (0.92, pipe_y, 1.90), 0.020, pipes_coll, mat_support)
+valve_stem = create_pipe(
+    "ValveStem", (0.92, pipe_y, pipe_z + 0.15), (0.92, pipe_y, 1.90), 0.020, pipes_coll, mat_support
+)
 valve_hub = create_pipe("ValveHub", (0.92, -2.64, 1.90), (0.92, -2.54, 1.90), 0.05, pipes_coll, mat_dark)
 valve_wheel = create_torus(
     "ValveWheel",
@@ -439,11 +444,21 @@ for idx, angle in enumerate((0.0, math.pi / 3.0, 2.0 * math.pi / 3.0)):
     )
     parent_keep_transform(spoke, valve_wheel)
 
-branch_up_main = create_pipe("BranchUpMain", (-2.7, pipe_y, pipe_z), (-2.7, pipe_y, 3.05), 0.07, pipes_coll, mat_secondary)
-branch_up_feed = create_pipe("BranchUpFeed", (-2.7, pipe_y, 3.05), (-3.12, -3.05, 3.05), 0.06, pipes_coll, mat_secondary)
-branch_down_main = create_pipe("BranchDownMain", (2.45, pipe_y, pipe_z), (2.45, pipe_y, 0.64), 0.08, pipes_coll, mat_secondary)
-branch_down_feed = create_pipe("BranchDownFeed", (2.45, -2.20, 0.64), (2.45, -1.10, 0.64), 0.06, pipes_coll, mat_secondary)
-branch_valve = create_pipe("BranchValve", (3.55, pipe_y, pipe_z), (3.55, pipe_y, 2.25), 0.055, pipes_coll, mat_secondary)
+branch_up_main = create_pipe(
+    "BranchUpMain", (-2.7, pipe_y, pipe_z), (-2.7, pipe_y, 3.05), 0.07, pipes_coll, mat_secondary
+)
+branch_up_feed = create_pipe(
+    "BranchUpFeed", (-2.7, pipe_y, 3.05), (-3.12, -3.05, 3.05), 0.06, pipes_coll, mat_secondary
+)
+branch_down_main = create_pipe(
+    "BranchDownMain", (2.45, pipe_y, pipe_z), (2.45, pipe_y, 0.64), 0.08, pipes_coll, mat_secondary
+)
+branch_down_feed = create_pipe(
+    "BranchDownFeed", (2.45, -2.20, 0.64), (2.45, -1.10, 0.64), 0.06, pipes_coll, mat_secondary
+)
+branch_valve = create_pipe(
+    "BranchValve", (3.55, pipe_y, pipe_z), (3.55, pipe_y, 2.25), 0.055, pipes_coll, mat_secondary
+)
 branch_valve_cap = create_torus(
     "BranchValveWheel",
     (3.55, -2.49, 2.26),
@@ -452,6 +467,7 @@ branch_valve_cap = create_torus(
     pipes_coll,
     mat_flange,
 )
+
 
 def support_group(prefix: str, x: float, rig: bpy.types.Object | None = None) -> list[bpy.types.Object]:
     objs = []
@@ -487,7 +503,9 @@ for obj in (
     valve_hub,
     valve_wheel,
 ):
-    parent_keep_transform(obj, joint_rig if obj.name.startswith(("Flange", "Gasket", "Joint", "Gauge", "Valve")) else main_rig)
+    parent_keep_transform(
+        obj, joint_rig if obj.name.startswith(("Flange", "Gasket", "Joint", "Gauge", "Valve")) else main_rig
+    )
 
 parent_keep_transform(gauge_needle, gauge_body)
 parent_keep_transform(joint_rig, main_rig)
@@ -644,46 +662,72 @@ for frame in range(1, FRAME_END + 1):
     main_amp = 0.0025 + 0.010 * stress + 0.018 * leak_start + 0.020 * leak_steady
     main_phase = frame * 2.0 * math.pi / 5.0
     pre_burst_y = main_amp * math.sin(main_phase)
-    pre_burst_rot = math.radians(0.2 + 0.9 * stress + 1.6 * leak_start + 2.3 * leak_steady) * math.sin(main_phase + 0.45)
+    pre_burst_rot = math.radians(0.2 + 0.9 * stress + 1.6 * leak_start + 2.3 * leak_steady) * math.sin(
+        main_phase + 0.45
+    )
 
     recoil = burst * (-0.085 + 0.11 * math.exp(-post / 16.0) * math.sin(post * 1.18))
     violent = burst_hold * 0.06 * math.exp(-post / 24.0) * math.sin(post * 1.56)
     main_rig.location = joint_center + Vector((0.0, pre_burst_y + recoil + violent, 0.002 * math.sin(main_phase + 0.7)))
-    main_rig.rotation_euler = Euler((0.0, 0.0, pre_burst_rot + math.radians(2.4) * burst_hold * math.exp(-post / 14.0) * math.sin(post * 1.05)), "XYZ")
+    main_rig.rotation_euler = Euler(
+        (0.0, 0.0, pre_burst_rot + math.radians(2.4) * burst_hold * math.exp(-post / 14.0) * math.sin(post * 1.05)),
+        "XYZ",
+    )
     insert_loc_rot(main_rig, frame)
 
-    joint_shake = (0.004 + 0.014 * stress + 0.022 * leak_start + 0.028 * leak_steady) * math.sin(frame * 2.0 * math.pi / 4.0 + 0.8)
-    torsion = math.radians(0.5 * stress + 1.2 * leak_start + 2.1 * leak_steady) * math.sin(frame * 2.0 * math.pi / 4.0 + 1.1)
+    joint_shake = (0.004 + 0.014 * stress + 0.022 * leak_start + 0.028 * leak_steady) * math.sin(
+        frame * 2.0 * math.pi / 4.0 + 0.8
+    )
+    torsion = math.radians(0.5 * stress + 1.2 * leak_start + 2.1 * leak_steady) * math.sin(
+        frame * 2.0 * math.pi / 4.0 + 1.1
+    )
     burst_torsion = math.radians(8.0) * burst_hold * math.exp(-post / 18.0) * math.sin(post * 1.42)
     joint_rig.location = joint_center + Vector((0.0, joint_shake, 0.0015 * math.sin(main_phase + 0.4)))
-    joint_rig.rotation_euler = Euler((torsion * 0.55 + burst_torsion * 0.35, math.radians(1.4) * leak_steady, torsion + burst_torsion), "XYZ")
+    joint_rig.rotation_euler = Euler(
+        (torsion * 0.55 + burst_torsion * 0.35, math.radians(1.4) * leak_steady, torsion + burst_torsion), "XYZ"
+    )
     insert_loc_rot(joint_rig, frame)
 
     whip = burst_hold * math.exp(-post / 11.0)
-    damaged_rig.location = damaged_rest_loc + Vector((0.012 * burst_hold, 0.05 * burst_hold + 0.10 * whip * math.sin(post * 1.65), 0.015 * burst_hold * math.sin(post * 0.8)))
-    damaged_rig.rotation_euler = Euler((
-        math.radians(5.5) * whip * math.sin(post * 1.35),
-        math.radians(-4.0) * burst_hold,
-        math.radians(18.0) * whip * math.sin(post * 1.52),
-    ), "XYZ")
+    damaged_rig.location = damaged_rest_loc + Vector(
+        (
+            0.012 * burst_hold,
+            0.05 * burst_hold + 0.10 * whip * math.sin(post * 1.65),
+            0.015 * burst_hold * math.sin(post * 0.8),
+        )
+    )
+    damaged_rig.rotation_euler = Euler(
+        (
+            math.radians(5.5) * whip * math.sin(post * 1.35),
+            math.radians(-4.0) * burst_hold,
+            math.radians(18.0) * whip * math.sin(post * 1.52),
+        ),
+        "XYZ",
+    )
     insert_loc_rot(damaged_rig, frame)
 
-    support_left_rig.rotation_euler = Euler((
-        0.0,
-        0.0,
-        support_left_rest.z + math.radians(0.3 + 0.5 * stress) * math.sin(main_phase + 1.4),
-    ), "XYZ")
+    support_left_rig.rotation_euler = Euler(
+        (
+            0.0,
+            0.0,
+            support_left_rest.z + math.radians(0.3 + 0.5 * stress) * math.sin(main_phase + 1.4),
+        ),
+        "XYZ",
+    )
     support_left_rig.location = support_left_rig.location
     insert_loc_rot(support_left_rig, frame)
 
-    support_right_rig.rotation_euler = Euler((
-        math.radians(0.7) * leak_start * math.sin(main_phase + 0.6),
-        0.0,
-        support_right_rest.z
-        + math.radians(0.4 + 0.8 * stress + 1.3 * leak_start) * math.sin(main_phase + 1.7)
-        + math.radians(-14.0) * burst_hold
-        + math.radians(9.0) * whip * math.sin(post * 1.18),
-    ), "XYZ")
+    support_right_rig.rotation_euler = Euler(
+        (
+            math.radians(0.7) * leak_start * math.sin(main_phase + 0.6),
+            0.0,
+            support_right_rest.z
+            + math.radians(0.4 + 0.8 * stress + 1.3 * leak_start) * math.sin(main_phase + 1.7)
+            + math.radians(-14.0) * burst_hold
+            + math.radians(9.0) * whip * math.sin(post * 1.18),
+        ),
+        "XYZ",
+    )
     insert_loc_rot(support_right_rig, frame)
 
     separation = 0.008 * leak_start + 0.028 * leak_steady + 0.050 * burst_hold
@@ -708,7 +752,9 @@ for frame in range(1, FRAME_END + 1):
     gauge_needle.keyframe_insert(data_path="rotation_euler", frame=frame)
 
     chatter = math.radians(3.0 + 7.0 * stress + 12.0 * leak_start) * math.sin(frame * 2.0 * math.pi / 2.0)
-    valve_wheel.rotation_euler = Euler((wheel_rest_rot.x, wheel_rest_rot.y + chatter * (1.0 - burst), wheel_rest_rot.z), "XYZ")
+    valve_wheel.rotation_euler = Euler(
+        (wheel_rest_rot.x, wheel_rest_rot.y + chatter * (1.0 - burst), wheel_rest_rot.z), "XYZ"
+    )
     if burst_hold > 0.0:
         valve_wheel.rotation_euler.y += math.radians(12.0) * whip * math.sin(post * 2.1)
     valve_wheel.keyframe_insert(data_path="rotation_euler", frame=frame)
@@ -717,13 +763,19 @@ for frame in range(1, FRAME_END + 1):
     pulse_strength = leak_start * (0.25 + 0.85 * pulse)
     steady_steam = leak_steady * (0.55 + 0.08 * math.sin(frame * 2.0 * math.pi / 6.0))
     steam_strength = max(pulse_strength, steady_steam)
-    steam_rig.location = steam_rest_loc + Vector((0.0, 0.004 * steam_strength * math.sin(main_phase), 0.002 * steam_strength))
+    steam_rig.location = steam_rest_loc + Vector(
+        (0.0, 0.004 * steam_strength * math.sin(main_phase), 0.002 * steam_strength)
+    )
     steam_rig.keyframe_insert(data_path="location", frame=frame)
 
     steam_front.scale = (0.10 + 0.08 * steam_strength, 0.01 + 1.35 * steam_strength, 0.10 + 0.08 * steam_strength)
     steam_upper.scale = (0.07 + 0.07 * steam_strength, 0.01 + 1.05 * steam_strength, 0.07 + 0.07 * steam_strength)
     steam_side.scale = (0.06 + 0.05 * steam_strength, 0.01 + 0.85 * steam_strength, 0.06 + 0.05 * steam_strength)
-    mist_cloud.scale = (0.12 + 0.30 * steam_strength, 0.01 + 1.10 * max(steam_strength, burst_hold * 0.55), 0.12 + 0.28 * steam_strength)
+    mist_cloud.scale = (
+        0.12 + 0.30 * steam_strength,
+        0.01 + 1.10 * max(steam_strength, burst_hold * 0.55),
+        0.12 + 0.28 * steam_strength,
+    )
     for obj in (steam_front, steam_upper, steam_side, mist_cloud):
         obj.keyframe_insert(data_path="scale", frame=frame)
 
