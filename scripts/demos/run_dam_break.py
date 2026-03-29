@@ -25,9 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import socket
-import sys
 import time
 import uuid
 from pathlib import Path
@@ -41,6 +39,7 @@ TIMEOUT = 30.0
 # ---------------------------------------------------------------------------
 # Bridge communication
 # ---------------------------------------------------------------------------
+
 
 def send_command(
     command: str,
@@ -103,6 +102,7 @@ def render_still(output_path: str, **kw: Any) -> dict:
 # Step definitions
 # ---------------------------------------------------------------------------
 
+
 def build_steps(library_dir: str) -> list[dict[str, Any]]:
     """Return the ordered list of demo steps."""
     lib = Path(library_dir)
@@ -113,9 +113,7 @@ def build_steps(library_dir: str) -> list[dict[str, Any]]:
             "label": "Clear scene and set frame range",
             "method": "inline",
             "code": (
-                "import bpy\n"
-                "bpy.ops.object.select_all(action='SELECT')\n"
-                "bpy.ops.object.delete(use_global=False)\n"
+                "import bpy\nbpy.ops.object.select_all(action='SELECT')\nbpy.ops.object.delete(use_global=False)\n"
             ),
         },
         {
@@ -124,7 +122,6 @@ def build_steps(library_dir: str) -> list[dict[str, Any]]:
             "script_path": str(lib / "frame_range.py"),
             "args": {"frame_start": 1, "frame_end": 120, "fps": 24},
         },
-
         # --- Step 2: Street blockout ----------------------------------------
         {
             "label": "Create ground plane (street)",
@@ -151,7 +148,6 @@ def build_steps(library_dir: str) -> list[dict[str, Any]]:
                 "__result__ = {'buildings': names}\n"
             ),
         },
-
         # --- Step 3: Debris objects -----------------------------------------
         {
             "label": "Create debris props",
@@ -168,7 +164,6 @@ def build_steps(library_dir: str) -> list[dict[str, Any]]:
                 "__result__ = {'debris': names}\n"
             ),
         },
-
         # --- Step 4: Rigid bodies -------------------------------------------
         {
             "label": "Add rigid bodies to debris",
@@ -181,7 +176,6 @@ def build_steps(library_dir: str) -> list[dict[str, Any]]:
                 "collision_shape": "BOX",
             },
         },
-
         # --- Step 5: Fluid domain -------------------------------------------
         {
             "label": "Create fluid domain (res 32)",
@@ -195,7 +189,6 @@ def build_steps(library_dir: str) -> list[dict[str, Any]]:
                 "cache_dir": "//fluid_cache",
             },
         },
-
         # --- Step 6: Inflow source ------------------------------------------
         {
             "label": "Create water inflow",
@@ -211,7 +204,6 @@ def build_steps(library_dir: str) -> list[dict[str, Any]]:
                 "initial_velocity": [-4, 0, 0],
             },
         },
-
         # --- Step 7: Colliders ----------------------------------------------
         {
             "label": "Set ground & buildings as colliders",
@@ -221,7 +213,6 @@ def build_steps(library_dir: str) -> list[dict[str, Any]]:
                 "objects": ["Ground", "Building_A", "Building_B", "Building_C"],
             },
         },
-
         # --- Step 8: Camera -------------------------------------------------
         {
             "label": "Create camera",
@@ -235,7 +226,6 @@ def build_steps(library_dir: str) -> list[dict[str, Any]]:
                 "set_active": True,
             },
         },
-
         # --- Step 9: Camera keyframes ---------------------------------------
         {
             "label": "Animate camera dolly",
@@ -243,19 +233,12 @@ def build_steps(library_dir: str) -> list[dict[str, Any]]:
             "script_path": str(lib / "keyframes.py"),
             "args": {
                 "keyframes": [
-                    {"object": "DamBreakCam", "frame": 1,
-                     "location": [15, -12, 8],
-                     "rotation": [1.0472, 0, 0.8727]},
-                    {"object": "DamBreakCam", "frame": 60,
-                     "location": [6, -10, 5],
-                     "rotation": [1.1345, 0, 0.5236]},
-                    {"object": "DamBreakCam", "frame": 120,
-                     "location": [0, -8, 3],
-                     "rotation": [1.2217, 0, 0.1745]},
+                    {"object": "DamBreakCam", "frame": 1, "location": [15, -12, 8], "rotation": [1.0472, 0, 0.8727]},
+                    {"object": "DamBreakCam", "frame": 60, "location": [6, -10, 5], "rotation": [1.1345, 0, 0.5236]},
+                    {"object": "DamBreakCam", "frame": 120, "location": [0, -8, 3], "rotation": [1.2217, 0, 0.1745]},
                 ],
             },
         },
-
         # --- Step 10: Collections -------------------------------------------
         {
             "label": "Organize into collections",
@@ -264,14 +247,13 @@ def build_steps(library_dir: str) -> list[dict[str, Any]]:
             "args": {
                 "collections": [
                     {"name": "Buildings", "objects": ["Building_A", "Building_B", "Building_C"]},
-                    {"name": "Debris",    "objects": ["Debris_Crate", "Debris_Barrel"]},
-                    {"name": "Fluid",     "objects": ["FluidDomain", "WaterInflow"]},
+                    {"name": "Debris", "objects": ["Debris_Crate", "Debris_Barrel"]},
+                    {"name": "Fluid", "objects": ["FluidDomain", "WaterInflow"]},
                     {"name": "Environment", "objects": ["Ground"]},
-                    {"name": "Camera",    "objects": ["DamBreakCam"]},
+                    {"name": "Camera", "objects": ["DamBreakCam"]},
                 ],
             },
         },
-
         # --- Step 11: Render settings ---------------------------------------
         {
             "label": "Set EEVEE preview render settings",
@@ -295,6 +277,7 @@ def build_steps(library_dir: str) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
+
 
 def run_mantaflow_demo(
     host: str,
@@ -358,12 +341,13 @@ def run_mantaflow_demo(
     # Optional: fluid bake (async) ------------------------------------------
     if bake and not dry_run:
         print(f"\n{'─' * 60}")
-        print(f"  Baking fluid simulation (async)...")
+        print("  Baking fluid simulation (async)...")
         print(f"{'─' * 60}")
         try:
             resp = exec_async(
                 "import bpy\nbpy.ops.fluid.bake_all()\n__result__ = {'baked': True}",
-                host=host, port=port,
+                host=host,
+                port=port,
             )
             if resp.get("success"):
                 job_id = resp["result"]["job_id"]
@@ -386,7 +370,7 @@ def run_mantaflow_demo(
     # Optional: render preview ----------------------------------------------
     if render and not dry_run:
         print(f"\n{'─' * 60}")
-        print(f"  Rendering preview still...")
+        print("  Rendering preview still...")
         print(f"{'─' * 60}")
         try:
             resp = render_still(render_output, host=host, port=port, timeout=120.0)
@@ -406,7 +390,7 @@ def run_mantaflow_demo(
     elif ok:
         print(f"  ✓ Mantaflow dam-break scene built successfully ({len(steps)} steps)")
     else:
-        print(f"  ✗ Some steps failed — check output above")
+        print("  ✗ Some steps failed — check output above")
     print(f"{'═' * 60}\n")
 
     return 0 if ok else 1
@@ -480,26 +464,20 @@ def run_demo(*args: Any, **kwargs: Any) -> int:
 # CLI
 # ---------------------------------------------------------------------------
 
-def main() -> int:
-    default_library = str(
-        Path(__file__).resolve().parent.parent / "library"
-    )
 
-    parser = argparse.ArgumentParser(
-        description="Build a dam-break demo scene through the Blender MCP bridge."
-    )
+def main() -> int:
+    default_library = str(Path(__file__).resolve().parent.parent / "library")
+
+    parser = argparse.ArgumentParser(description="Build a dam-break demo scene through the Blender MCP bridge.")
     parser.add_argument("--host", default=BRIDGE_HOST)
     parser.add_argument("--port", type=int, default=BRIDGE_PORT)
-    parser.add_argument("--library", default=default_library,
-                        help="Path to scripts/library/ directory")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Print commands without sending")
-    parser.add_argument("--bake", action="store_true",
-                        help="Trigger fluid bake after scene setup")
-    parser.add_argument("--render", action="store_true",
-                        help="Render a preview still after setup")
-    parser.add_argument("--render-output", default="/tmp/dam_break_preview.png",
-                        help="Output path for the preview render")
+    parser.add_argument("--library", default=default_library, help="Path to scripts/library/ directory")
+    parser.add_argument("--dry-run", action="store_true", help="Print commands without sending")
+    parser.add_argument("--bake", action="store_true", help="Trigger fluid bake after scene setup")
+    parser.add_argument("--render", action="store_true", help="Render a preview still after setup")
+    parser.add_argument(
+        "--render-output", default="/tmp/dam_break_preview.png", help="Output path for the preview render"
+    )
     parser.add_argument(
         "--simulation",
         choices=("procedural", "mantaflow"),

@@ -13,8 +13,9 @@ Args:
 
 from __future__ import annotations
 
-import bpy
 import math
+
+import bpy
 
 
 def ensure_collection(name: str, parent: bpy.types.Collection | None = None) -> bpy.types.Collection:
@@ -31,7 +32,9 @@ def link_to_collection(obj: bpy.types.Object, coll: bpy.types.Collection) -> Non
     coll.objects.link(obj)
 
 
-def create_block(name: str, size: tuple[float, float, float], location: tuple[float, float, float], coll: bpy.types.Collection) -> bpy.types.Object:
+def create_block(
+    name: str, size: tuple[float, float, float], location: tuple[float, float, float], coll: bpy.types.Collection
+) -> bpy.types.Object:
     sx, sy, sz = size
     hx, hy, hz = sx / 2.0, sy / 2.0, sz / 2.0
     verts = [
@@ -214,11 +217,11 @@ def smoothstep(edge0: float, edge1: float, x: float) -> float:
 
 def wave_state(frame: int, frame_end: int) -> dict[str, float]:
     t = (frame - 1) / max(1.0, float(frame_end - 1))
-    lead_x = 10.4 - 18.6 * (t ** 0.82)
+    lead_x = 10.4 - 18.6 * (t**0.82)
     crest_x = lead_x + 1.45
     branch_strength = smoothstep(2.2, -1.2, lead_x)
-    north_front = branch_strength * (1.0 + 8.2 * (t ** 0.95))
-    south_front = branch_strength * (0.8 + 6.6 * (t ** 0.98))
+    north_front = branch_strength * (1.0 + 8.2 * (t**0.95))
+    south_front = branch_strength * (0.8 + 6.6 * (t**0.98))
     return {
         "t": t,
         "lead_x": lead_x,
@@ -236,7 +239,7 @@ def water_depth_at(frame: int, frame_end: int, x: float, y: float) -> float:
     road_mask = 1.0 - smoothstep(1.55, 2.35, abs(y))
     main_fill = smoothstep(state["lead_x"] - 0.2, state["lead_x"] + 0.85, x)
     source_cut = 1.0 - smoothstep(10.0, 10.9, x)
-    crest = math.exp(-((x - state["crest_x"]) / 1.25) ** 2) * state["crest_height"]
+    crest = math.exp(-(((x - state["crest_x"]) / 1.25) ** 2)) * state["crest_height"]
     wake = state["body_depth"] * (0.7 + 0.3 * (1.0 - smoothstep(6.5, 10.2, x)))
     main_depth = road_mask * source_cut * main_fill * (wake + crest)
 
@@ -244,24 +247,53 @@ def water_depth_at(frame: int, frame_end: int, x: float, y: float) -> float:
 
     north_gate = smoothstep(0.15, 0.8, y)
     north_fill = 1.0 - smoothstep(state["north_front"] - 0.7, state["north_front"] + 0.45, y)
-    north_crest = math.exp(-((y - state["north_front"]) / 0.75) ** 2) * 0.75
-    north_depth = branch_x_mask * state["branch_strength"] * north_gate * north_fill * (0.18 + 0.35 * state["branch_strength"] + north_crest)
+    north_crest = math.exp(-(((y - state["north_front"]) / 0.75) ** 2)) * 0.75
+    north_depth = (
+        branch_x_mask
+        * state["branch_strength"]
+        * north_gate
+        * north_fill
+        * (0.18 + 0.35 * state["branch_strength"] + north_crest)
+    )
 
     south_gate = smoothstep(0.15, 0.8, -y)
     south_fill = 1.0 - smoothstep(state["south_front"] - 0.7, state["south_front"] + 0.45, -y)
-    south_crest = math.exp(-((-y - state["south_front"]) / 0.75) ** 2) * 0.62
-    south_depth = branch_x_mask * state["branch_strength"] * south_gate * south_fill * (0.16 + 0.28 * state["branch_strength"] + south_crest)
+    south_crest = math.exp(-(((-y - state["south_front"]) / 0.75) ** 2)) * 0.62
+    south_depth = (
+        branch_x_mask
+        * state["branch_strength"]
+        * south_gate
+        * south_fill
+        * (0.16 + 0.28 * state["branch_strength"] + south_crest)
+    )
 
-    source_burst = (1.0 - smoothstep(0.0, 0.18, state["t"])) * (1.0 - smoothstep(7.6, 10.8, x)) * (1.0 - smoothstep(1.9, 3.1, abs(y))) * 0.85
+    source_burst = (
+        (1.0 - smoothstep(0.0, 0.18, state["t"]))
+        * (1.0 - smoothstep(7.6, 10.8, x))
+        * (1.0 - smoothstep(1.9, 3.1, abs(y)))
+        * 0.85
+    )
     return max(0.0, main_depth, north_depth, south_depth, source_burst)
 
 
 def foam_strength_at(frame: int, frame_end: int, x: float, y: float) -> float:
     state = wave_state(frame, frame_end)
-    main_crest = math.exp(-((x - state["crest_x"]) / 0.42) ** 2) * (1.0 - smoothstep(1.4, 2.2, abs(y)))
-    north_crest = math.exp(-((y - state["north_front"]) / 0.35) ** 2) * (1.0 - smoothstep(1.1, 1.9, abs(x - 0.3))) if state["north_front"] > 0.4 else 0.0
-    south_crest = math.exp(-((-y - state["south_front"]) / 0.35) ** 2) * (1.0 - smoothstep(1.1, 1.9, abs(x - 0.3))) if state["south_front"] > 0.4 else 0.0
-    source = (1.0 - smoothstep(0.0, 0.24, state["t"])) * (1.0 - smoothstep(7.8, 10.8, x)) * (1.0 - smoothstep(1.5, 2.7, abs(y)))
+    main_crest = math.exp(-(((x - state["crest_x"]) / 0.42) ** 2)) * (1.0 - smoothstep(1.4, 2.2, abs(y)))
+    north_crest = (
+        math.exp(-(((y - state["north_front"]) / 0.35) ** 2)) * (1.0 - smoothstep(1.1, 1.9, abs(x - 0.3)))
+        if state["north_front"] > 0.4
+        else 0.0
+    )
+    south_crest = (
+        math.exp(-(((-y - state["south_front"]) / 0.35) ** 2)) * (1.0 - smoothstep(1.1, 1.9, abs(x - 0.3)))
+        if state["south_front"] > 0.4
+        else 0.0
+    )
+    source = (
+        (1.0 - smoothstep(0.0, 0.24, state["t"]))
+        * (1.0 - smoothstep(7.8, 10.8, x))
+        * (1.0 - smoothstep(1.5, 2.7, abs(y)))
+    )
     return max(main_crest, north_crest, south_crest, source)
 
 
@@ -303,7 +335,9 @@ def append_surface_patch(
             faces.append((v0, v1, v2, v3))
 
 
-def create_water_mesh(name: str, frame: int, frame_end: int, buildings: list[dict], mat: bpy.types.Material, coll: bpy.types.Collection) -> bpy.types.Object:
+def create_water_mesh(
+    name: str, frame: int, frame_end: int, buildings: list[dict], mat: bpy.types.Material, coll: bpy.types.Collection
+) -> bpy.types.Object:
     state = wave_state(frame, frame_end)
     verts: list[tuple[float, float, float]] = []
     faces: list[tuple[int, int, int, int]] = []
@@ -366,7 +400,9 @@ def create_water_mesh(name: str, frame: int, frame_end: int, buildings: list[dic
     return obj
 
 
-def create_foam_mesh(name: str, frame: int, frame_end: int, buildings: list[dict], mat: bpy.types.Material, coll: bpy.types.Collection) -> bpy.types.Object:
+def create_foam_mesh(
+    name: str, frame: int, frame_end: int, buildings: list[dict], mat: bpy.types.Material, coll: bpy.types.Collection
+) -> bpy.types.Object:
     x0, x1 = -11.0, 10.8
     y0, y1 = -8.2, 9.6
     nx, ny = 52, 38
@@ -419,7 +455,7 @@ def water_velocity_at(frame: int, frame_end: int, x: float, y: float) -> tuple[f
     depth = water_depth_at(frame, frame_end, x, y)
     if depth <= 0.03:
         return 0.0, 0.0
-    vx = -0.11 - 0.08 * math.exp(-((x - state["crest_x"]) / 1.5) ** 2)
+    vx = -0.11 - 0.08 * math.exp(-(((x - state["crest_x"]) / 1.5) ** 2))
     vy = 0.0
     if abs(x - 0.3) < 1.7:
         if y > 0.1 and y < state["north_front"]:
@@ -496,10 +532,7 @@ if world:
         bg.inputs[1].default_value = 0.95
 
 buildings, debris_coll, env_coll = build_environment(scene)
-debris_specs = [
-    {"name": obj.name, "object": obj, "loc": tuple(obj.location)}
-    for obj in debris_coll.objects
-]
+debris_specs = [{"name": obj.name, "object": obj, "loc": tuple(obj.location)} for obj in debris_coll.objects]
 
 water_coll = ensure_collection("FloodWater")
 foam_coll = ensure_collection("FloodFoam")

@@ -12,9 +12,7 @@ from typing import Any
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Send a JSON command to the Blender add-on bridge on localhost."
-    )
+    parser = argparse.ArgumentParser(description="Send a JSON command to the Blender add-on bridge on localhost.")
     parser.add_argument(
         "command",
         help="Bridge command, for example: scene.get_info or object.create_mesh",
@@ -26,15 +24,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--host", default="127.0.0.1", help="Bridge host")
     parser.add_argument("--port", type=int, default=9876, help="Bridge port")
-    parser.add_argument(
-        "--timeout", type=float, default=10.0, help="Socket timeout in seconds"
-    )
+    parser.add_argument("--timeout", type=float, default=10.0, help="Socket timeout in seconds")
     return parser.parse_args()
 
 
-def send_request(
-    host: str, port: int, command: str, params: dict[str, Any], timeout: float
-) -> dict[str, Any]:
+def send_request(host: str, port: int, command: str, params: dict[str, Any], timeout: float) -> dict[str, Any]:
     request = {
         "id": str(uuid.uuid4()),
         "command": command,
@@ -46,9 +40,7 @@ def send_request(
         while b"\n" not in buffer:
             chunk = sock.recv(65536)
             if not chunk:
-                raise ConnectionError(
-                    "Connection closed before a full response arrived"
-                )
+                raise ConnectionError("Connection closed before a full response arrived")
             buffer += chunk
     line = buffer.split(b"\n", 1)[0]
     return json.loads(line.decode("utf-8"))
@@ -66,9 +58,7 @@ def main() -> int:
         return 2
 
     try:
-        response = send_request(
-            args.host, args.port, args.command, params, args.timeout
-        )
+        response = send_request(args.host, args.port, args.command, params, args.timeout)
     except OSError as exc:
         print(f"Bridge request failed: {exc}", file=sys.stderr)
         return 1

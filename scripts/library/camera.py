@@ -14,6 +14,7 @@ Result:
     focal_length (float): Focal length set
     is_active (bool): Whether it is the active scene camera
 """
+
 import bpy
 
 use_existing = args.get("use_existing")

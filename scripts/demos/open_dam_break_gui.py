@@ -10,7 +10,6 @@ from pathlib import Path
 
 import bpy
 
-
 SCENE_SCRIPT = Path(__file__).with_name("procedural_dam_break_scene.py")
 
 

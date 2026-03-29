@@ -8,6 +8,7 @@ executes the script there, and returns a structured result payload.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import tempfile
@@ -136,9 +137,7 @@ class HeadlessBlenderExecutor:
 
             code_path.write_text(code or "", encoding="utf-8")
             args_path.write_text(json.dumps(args), encoding="utf-8")
-            wrapper_path.write_text(
-                _build_wrapper_script(code_path, args_path), encoding="utf-8"
-            )
+            wrapper_path.write_text(_build_wrapper_script(code_path, args_path), encoding="utf-8")
 
             cmd = [self.blender_binary, "-b"]
             if factory_startup is not False:
@@ -158,11 +157,7 @@ class HeadlessBlenderExecutor:
             try:
                 stdout_b, stderr_b = await asyncio.wait_for(
                     proc.communicate(),
-                    timeout=(
-                        timeout_seconds
-                        if timeout_seconds and timeout_seconds > 0
-                        else None
-                    ),
+                    timeout=(timeout_seconds if timeout_seconds and timeout_seconds > 0 else None),
                 )
             except asyncio.TimeoutError:
                 proc.kill()
@@ -326,10 +321,8 @@ class HeadlessJobManager:
         task = job.get("task")
         if task is not None and not task.done():
             task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await task
-            except asyncio.CancelledError:
-                pass
         if job["status"] in {"queued", "running"}:
             job["status"] = "cancelled"
             job["completed_at"] = time.time()

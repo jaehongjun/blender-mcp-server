@@ -13,6 +13,7 @@ Result:
     objects (list[str]): Unique object names that received keyframes
     skipped (list[str]): Objects not found
 """
+
 import bpy
 
 keyframes = args.get("keyframes", [])
