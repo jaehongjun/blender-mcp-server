@@ -28,26 +28,48 @@ from typing import Any
 import bpy
 from bpy.app.handlers import persistent
 
-from addon.models import (
-    ExportFileParams,
-    JobIdParams,
-    MaterialAssignParams,
-    MaterialCreateParams,
-    MaterialSetColorParams,
-    MaterialSetTextureParams,
-    ObjectCreateMeshParams,
-    ObjectDeleteParams,
-    ObjectDuplicateParams,
-    ObjectGetHierarchyParams,
-    ObjectGetTransformParams,
-    ObjectRotateParams,
-    ObjectScaleParams,
-    ObjectTranslateParams,
-    PythonExecuteParams,
-    RenderAnimationParams,
-    RenderStillParams,
-    SceneListObjectsParams,
-)
+try:
+    from .models import (
+        ExportFileParams,
+        JobIdParams,
+        MaterialAssignParams,
+        MaterialCreateParams,
+        MaterialSetColorParams,
+        MaterialSetTextureParams,
+        ObjectCreateMeshParams,
+        ObjectDeleteParams,
+        ObjectDuplicateParams,
+        ObjectGetHierarchyParams,
+        ObjectGetTransformParams,
+        ObjectRotateParams,
+        ObjectScaleParams,
+        ObjectTranslateParams,
+        PythonExecuteParams,
+        RenderAnimationParams,
+        RenderStillParams,
+        SceneListObjectsParams,
+    )
+except ImportError:
+    from addon.models import (
+        ExportFileParams,
+        JobIdParams,
+        MaterialAssignParams,
+        MaterialCreateParams,
+        MaterialSetColorParams,
+        MaterialSetTextureParams,
+        ObjectCreateMeshParams,
+        ObjectDeleteParams,
+        ObjectDuplicateParams,
+        ObjectGetHierarchyParams,
+        ObjectGetTransformParams,
+        ObjectRotateParams,
+        ObjectScaleParams,
+        ObjectTranslateParams,
+        PythonExecuteParams,
+        RenderAnimationParams,
+        RenderStillParams,
+        SceneListObjectsParams,
+    )
 
 logger = logging.getLogger(__name__)
 

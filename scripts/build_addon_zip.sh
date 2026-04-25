@@ -19,6 +19,7 @@ rm -f "${ZIP_PATH}"
 
 mkdir -p "${ADDON_DIR}"
 cp "${REPO_ROOT}/addon/__init__.py" "${ADDON_DIR}/__init__.py"
+cp "${REPO_ROOT}/addon/models.py" "${ADDON_DIR}/models.py"
 
 (
     cd "${DIST_DIR}"
